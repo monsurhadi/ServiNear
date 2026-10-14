@@ -9,12 +9,38 @@ const escapeHtml = (value = "") => String(value).replace(/[&<>"']/g, (char) => (
 const money = (value) => value == null ? "Budget flexible" : `৳${Number(value).toLocaleString("en-BD")}`;
 const dateLabel = (value) => new Intl.DateTimeFormat("en", { dateStyle: "medium" }).format(new Date(`${String(value).replace(" ", "T")}Z`));
 const categoryOptions = (placeholder = "Choose a category") => `<option value="">${placeholder}</option>${state.categories.map((c) => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join("")}`;
-const API_BASE = String(window.SERVINEAR_API_BASE || "").replace(/\/$/, "");
+const API_BASE = String(window.SERVINEAR_API_BASE || "").trim().replace(/\/+$/, "");
 
 async function api(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, { credentials: "include", ...options, headers: { ...(options.body ? { "Content-Type": "application/json" } : {}), ...options.headers } });
-  const data = response.status === 204 ? {} : await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.message || "The request could not be completed.");
+  if (!API_BASE) {
+    throw new Error("API URL is not configured. Set SERVINEAR_API_BASE in runtime-config.js or Vercel environment variables.");
+  }
+
+  const headers = {
+    ...(options.body ? { "Content-Type": "application/json" } : {}),
+    ...options.headers
+  };
+
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      credentials: "include",
+      headers
+    });
+  } catch (error) {
+    console.error("ServiNear API connection failed:", error);
+    throw new Error("Cannot reach the ServiNear API. Check the backend, Cloudflare Tunnel URL, and backend CORS settings.");
+  }
+
+  const data = response.status === 204
+    ? {}
+    : await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.message || `Request failed (HTTP ${response.status}).`);
+  }
+
   return data;
 }
 const post = (path, body, method = "POST") => api(path, { method, body: JSON.stringify(body) });
