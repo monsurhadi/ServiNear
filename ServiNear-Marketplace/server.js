@@ -13,8 +13,8 @@ const PORT = Number(process.env.PORT || 5000);
 const SESSION_TTL = 7 * 24 * 60 * 60;
 const WEB_ORIGIN = String(process.env.WEB_ORIGIN || "").replace(/\/$/, "");
 const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || "";
-if (process.env.NODE_ENV === "production" && (!WEB_ORIGIN.startsWith("https://") || !COOKIE_DOMAIN)) {
-  throw new Error("Production requires HTTPS WEB_ORIGIN and COOKIE_DOMAIN settings.");
+if (process.env.NODE_ENV === "production" && !WEB_ORIGIN.startsWith("https://")) {
+  throw new Error("Production requires HTTPS WEB_ORIGIN.");
 }
 const sessions = new Map();
 const CATEGORIES = [
@@ -305,10 +305,17 @@ function publicJobs(user) {
     EXISTS(SELECT 1 FROM reviews r WHERE r.job_id=o.job_id) AS reviewed FROM offers o JOIN users w ON w.id=o.worker_id`).all();
   return {jobs,offers};
 }
+function sessionCookie(token, maxAge = SESSION_TTL) {
+  const crossSite = Boolean(WEB_ORIGIN && !WEB_ORIGIN.includes("localhost"));
+  const sameSite = crossSite ? "None" : "Lax";
+  const secure = crossSite || process.env.NODE_ENV === "production" ? "; Secure" : "";
+  const domain = COOKIE_DOMAIN ? `; Domain=${COOKIE_DOMAIN}` : "";
+  return `servinear_session=${token}; HttpOnly; SameSite=${sameSite}; Path=/; Max-Age=${maxAge}${domain}${secure}`;
+}
 function setSession(userId) {
   const token=crypto.randomBytes(32).toString("hex");
   sessions.set(token,{user:{id:userId},expiresAt:Date.now()+SESSION_TTL*1000});
-  return `servinear_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_TTL}${COOKIE_DOMAIN?`; Domain=${COOKIE_DOMAIN}`:""}${process.env.NODE_ENV==="production"?"; Secure":""}`;
+  return sessionCookie(token, SESSION_TTL);
 }
 function validateText(value,label,min,max) {
   const text=String(value||"").trim();
@@ -332,7 +339,7 @@ async function handleApi(req,res,url) {
   }
   if(req.method==="POST"&&url.pathname==="/api/auth/logout") {
     const token=parseCookies(req.headers.cookie).servinear_session;if(token)sessions.delete(token);
-    return send(res,200,{ok:true},{"Set-Cookie":"servinear_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"});
+    return send(res,200,{ok:true},{"Set-Cookie":sessionCookie("", 0)});
   }
   if(req.method==="POST"&&url.pathname==="/api/auth/register") {
     const body=await readBody(req);const name=validateText(body.name,"Name",2,80);const email=String(body.email||"").trim().toLowerCase();
