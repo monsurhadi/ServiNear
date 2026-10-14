@@ -1,0 +1,25 @@
+services:
+  servinear-api:
+    build: .
+    container_name: servinear-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      DATA_DIR: /app/data
+      SEED_DEMO_DATA: "false"
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - servinear_data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  servinear_data:
