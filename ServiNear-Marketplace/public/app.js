@@ -18,6 +18,7 @@ async function api(path, options = {}) {
 
   const headers = {
     ...(options.body ? { "Content-Type": "application/json" } : {}),
+    "ngrok-skip-browser-warning": "true",
     ...options.headers
   };
 

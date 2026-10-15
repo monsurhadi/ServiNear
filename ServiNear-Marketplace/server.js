@@ -446,7 +446,7 @@ const server=http.createServer(async(req,res)=>{
       }
       if(req.method==="OPTIONS") {
         res.setHeader("Access-Control-Allow-Methods","GET,POST,PATCH,OPTIONS");
-        res.setHeader("Access-Control-Allow-Headers","Content-Type");
+        res.setHeader("Access-Control-Allow-Headers","Content-Type,ngrok-skip-browser-warning");
         res.writeHead(204);return res.end();
       }
       return await handleApi(req,res,url);
