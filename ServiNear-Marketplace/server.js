@@ -108,6 +108,47 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_jobs_status_created ON jobs(status,created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_offers_job_status ON offers(job_id,status);
   CREATE INDEX IF NOT EXISTS idx_tickets_status ON support_tickets(status,created_at DESC);
+  CREATE TABLE IF NOT EXISTS nid_verifications (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    nid_front TEXT NOT NULL,
+    nid_back TEXT NOT NULL,
+    selfie_nid TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+    admin_notes TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    reviewed_at TEXT
+  );
+  CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY,
+    sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    recipient_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    job_id INTEGER REFERENCES jobs(id) ON DELETE SET NULL,
+    content TEXT NOT NULL,
+    read INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS saved_posts (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    target_type TEXT NOT NULL CHECK(target_type IN ('job','worker')),
+    target_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, target_type, target_id)
+  );
+  CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'system',
+    link TEXT,
+    read INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(sender_id, recipient_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id, read, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_nid_status ON nid_verifications(status, created_at DESC);
 `);
 
 function ensureColumn(table, column, definition) {
@@ -117,6 +158,14 @@ function ensureColumn(table, column, definition) {
 ensureColumn("users", "address", "TEXT");
 ensureColumn("jobs", "contact_phone", "TEXT");
 ensureColumn("jobs", "exact_address", "TEXT");
+ensureColumn("users", "first_name", "TEXT");
+ensureColumn("users", "surname", "TEXT");
+ensureColumn("users", "gender", "TEXT");
+ensureColumn("users", "city", "TEXT");
+ensureColumn("users", "occupation", "TEXT");
+ensureColumn("users", "google_id", "TEXT");
+ensureColumn("users", "reset_token", "TEXT");
+ensureColumn("users", "reset_expires", "INTEGER");
 
 function passwordHash(password, salt = crypto.randomBytes(16).toString("hex")) {
   return `${salt}:${crypto.scryptSync(password, salt, 64).toString("hex")}`;
@@ -257,7 +306,20 @@ function fail(status,message) { const error=new Error(message); error.status=sta
 function parseCookies(header="") {
   return Object.fromEntries(header.split(";").map((part)=>{const i=part.indexOf("=");return i<0?["",""]:[part.slice(0,i).trim(),decodeURIComponent(part.slice(i+1).trim())];}));
 }
-function currentUser(id) { return db.prepare("SELECT id,name,email,role,phone,area,address,category,bio,rate,experience,latitude,longitude,verified,availability FROM users WHERE id=?").get(id)||null; }
+function currentUser(id) {
+  return db.prepare("SELECT id,name,first_name,surname,email,role,gender,city,occupation,phone,area,address,category,bio,rate,experience,latitude,longitude,verified,availability FROM users WHERE id=?").get(id)||null;
+}
+function notifyUser(userId, title, message, type = "system", link = null) {
+  try {
+    db.prepare("INSERT INTO notifications(user_id,title,message,type,link) VALUES(?,?,?,?,?)").run(userId, title, message, type, link);
+  } catch(e) { console.error("Notification error:", e); }
+}
+function notifyAdmins(title, message, type = "admin", link = null) {
+  try {
+    const admins = db.prepare("SELECT id FROM users WHERE role='admin'").all();
+    admins.forEach(a => notifyUser(a.id, title, message, type, link));
+  } catch(e) { console.error("Admin notification error:", e); }
+}
 function getSession(req) {
   const token=parseCookies(req.headers.cookie).servinear_session;
   const session=token?sessions.get(token):null;
@@ -269,7 +331,7 @@ function requireUser(user,roles=[]) { if(!user)fail(401,"Sign in to continue.");
 function readBody(req) {
   return new Promise((resolve,reject)=>{
     let data="";
-    req.on("data",chunk=>{data+=chunk;if(data.length>24000){reject(Object.assign(new Error("That request is too large."),{status:413}));req.destroy();}});
+    req.on("data",chunk=>{data+=chunk;if(data.length>15000000){reject(Object.assign(new Error("That request is too large."),{status:413}));req.destroy();}});
     req.on("end",()=>{try{resolve(data?JSON.parse(data):{});}catch{reject(Object.assign(new Error("Please send valid JSON."),{status:400}));}});
     req.on("error",reject);
   });
@@ -329,7 +391,11 @@ async function handleApi(req,res,url) {
   if(req.method==="GET"&&url.pathname==="/api/health")return send(res,200,{ok:true,database:"connected",app:"ServiNear"});
   if(req.method==="GET"&&url.pathname==="/api/bootstrap") {
     const data=publicJobs(user);
-    return send(res,200,{user,workers:publicWorkers(),categories:db.prepare("SELECT name,description FROM categories ORDER BY id").all(),...data});
+    const notifications = user ? db.prepare("SELECT id,title,message,type,link,read,created_at FROM notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 20").all(user.id) : [];
+    const unreadNotifications = user ? db.prepare("SELECT COUNT(*) AS count FROM notifications WHERE user_id=? AND read=0").get(user.id).count : 0;
+    const unreadMessages = user ? db.prepare("SELECT COUNT(*) AS count FROM messages WHERE recipient_id=? AND read=0").get(user.id).count : 0;
+    const savedCount = user ? db.prepare("SELECT COUNT(*) AS count FROM saved_posts WHERE user_id=?").get(user.id).count : 0;
+    return send(res,200,{user,workers:publicWorkers(),categories:db.prepare("SELECT name,description FROM categories ORDER BY id").all(),notifications,unreadNotifications,unreadMessages,savedCount,...data});
   }
   if(req.method==="POST"&&url.pathname==="/api/auth/login") {
     const body=await readBody(req);const email=String(body.email||"").trim().toLowerCase();
@@ -342,21 +408,81 @@ async function handleApi(req,res,url) {
     return send(res,200,{ok:true},{"Set-Cookie":sessionCookie("", 0)});
   }
   if(req.method==="POST"&&url.pathname==="/api/auth/register") {
-    const body=await readBody(req);const name=validateText(body.name,"Name",2,80);const email=String(body.email||"").trim().toLowerCase();
-    const password=String(body.password||"");const role=body.role==="worker"?"worker":"customer";
+    const body=await readBody(req);
+    const firstName=String(body.first_name||"").trim();
+    const surname=String(body.surname||"").trim();
+    const computedName = (firstName && surname ? `${firstName} ${surname}` : String(body.name || "")).trim();
+    const name=validateText(computedName,"Name",2,80);
+    const email=String(body.email||"").trim().toLowerCase();
+    const password=String(body.password||"");
+    const role=body.role==="worker"?"worker":"customer";
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||email.length>180)fail(400,"Enter a valid email address.");
-    if(password.length<10||password.length>200)fail(400,"Use a password with at least 10 characters.");
-    const phone=validateText(body.phone,"Phone",5,30);const area=validateText(body.area,"Area",2,120);
+    if(password.length<8||password.length>200)fail(400,"Use a password with at least 8 characters.");
+    const phone=String(body.phone||"").trim().slice(0,30)||null;
+    const city=String(body.city||body.area||"Dhaka").trim();
+    const area=validateText(city,"City / Area",2,120);
     const address=String(body.address||"").trim().slice(0,220)||null;
-    const category=role==="worker"?validateText(body.category,"Service category",2,60):null;
+    const gender=String(body.gender||"").trim().slice(0,30)||null;
+    const occupation=String(body.occupation||"").trim().slice(0,80)||null;
+    const category=role==="worker"?validateText(body.category||occupation||"Handyman","Service category",2,60):null;
     const bio=role==="worker"?String(body.bio||"").trim().slice(0,500):null;
     const rate=role==="worker"?Math.max(1,Math.min(1000000,Number(body.rate)||500)):null;
     const position=role==="worker"?coordinates(body):{lat:null,lng:null};
     try {
-      const result=db.prepare(`INSERT INTO users(name,email,password_hash,role,phone,area,address,category,bio,rate,latitude,longitude)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run(name,email,passwordHash(password),role,phone,area,address,category,bio,rate,position.lat,position.lng);
-      const id=Number(result.lastInsertRowid);return send(res,201,{user:currentUser(id)},{"Set-Cookie":setSession(id)});
+      const result=db.prepare(`INSERT INTO users(name,first_name,surname,email,password_hash,role,gender,city,occupation,phone,area,address,category,bio,rate,latitude,longitude)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(name,firstName||null,surname||null,email,passwordHash(password),role,gender,city,occupation,phone,area,address,category,bio,rate,position.lat,position.lng);
+      const id=Number(result.lastInsertRowid);
+      notifyUser(id, "Welcome to ServiNear!", "Your account is created. Explore local verified helpers and post your first task.", "system");
+      return send(res,201,{user:currentUser(id)},{"Set-Cookie":setSession(id)});
     } catch(error) {if(String(error.message).includes("UNIQUE"))fail(409,"An account with that email already exists.");throw error;}
+  }
+  if(req.method==="POST"&&url.pathname==="/api/auth/google") {
+    const body=await readBody(req);
+    const email=String(body.email||"").trim().toLowerCase();
+    const name=String(body.name||"Google User").trim().slice(0,80);
+    const googleId=String(body.google_id||body.sub||"google_"+Date.now());
+    if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail(400,"A valid Google email is required.");
+    let userRecord = db.prepare("SELECT id FROM users WHERE email=?").get(email);
+    if(userRecord) {
+      db.prepare("UPDATE users SET google_id=? WHERE id=?").run(googleId, userRecord.id);
+      return send(res,200,{user:currentUser(userRecord.id)},{"Set-Cookie":setSession(userRecord.id)});
+    } else {
+      const role=body.role==="worker"?"worker":"customer";
+      const dummyPassword = crypto.randomBytes(16).toString("hex");
+      const result=db.prepare(`INSERT INTO users(name,email,password_hash,google_id,role,area,availability)
+        VALUES(?,?,?,?,?,'Dhaka','Available')`).run(name,email,passwordHash(dummyPassword),googleId,role);
+      const id=Number(result.lastInsertRowid);
+      notifyUser(id, "Welcome via Google!", "Your account has been connected with Google.", "system");
+      return send(res,201,{user:currentUser(id)},{"Set-Cookie":setSession(id)});
+    }
+  }
+  if(req.method==="POST"&&url.pathname==="/api/auth/forgot-password") {
+    const body=await readBody(req);
+    const email=String(body.email||"").trim().toLowerCase();
+    if(!email)fail(400,"Please enter your email address.");
+    const userRecord = db.prepare("SELECT id FROM users WHERE email=?").get(email);
+    if(!userRecord) {
+      return send(res,200,{ok:true,message:"If this email exists in our records, a reset code has been sent."});
+    }
+    const token = Math.floor(100000 + Math.random() * 900000).toString();
+    const expires = Date.now() + 60 * 60 * 1000;
+    db.prepare("UPDATE users SET reset_token=?, reset_expires=? WHERE id=?").run(token, expires, userRecord.id);
+    return send(res,200,{ok:true,message:"Password reset code generated.",reset_code:token});
+  }
+  if(req.method==="POST"&&url.pathname==="/api/auth/reset-password") {
+    const body=await readBody(req);
+    const email=String(body.email||"").trim().toLowerCase();
+    const code=String(body.code||body.token||"").trim();
+    const newPassword=String(body.password||"");
+    if(!email||!code||!newPassword)fail(400,"Email, reset code, and new password are required.");
+    if(newPassword.length<8)fail(400,"Password must be at least 8 characters.");
+    const userRecord = db.prepare("SELECT id, reset_token, reset_expires FROM users WHERE email=?").get(email);
+    if(!userRecord||userRecord.reset_token!==code||!userRecord.reset_expires||userRecord.reset_expires<Date.now()) {
+      fail(400,"Invalid or expired password reset code.");
+    }
+    db.prepare("UPDATE users SET password_hash=?, reset_token=NULL, reset_expires=NULL WHERE id=?").run(passwordHash(newPassword), userRecord.id);
+    notifyUser(userRecord.id, "Password Changed", "Your account password was successfully reset.", "security");
+    return send(res,200,{ok:true,message:"Password updated successfully. You can now log in."});
   }
   if(req.method==="PATCH"&&url.pathname==="/api/profile") {
     requireUser(user);const body=await readBody(req);const name=validateText(body.name,"Name",2,80);const phone=validateText(body.phone,"Phone",5,30);const area=validateText(body.area,"Area",2,120);const address=String(body.address||"").trim().slice(0,220);
@@ -381,16 +507,24 @@ async function handleApi(req,res,url) {
     const jobId=Number(offerMatch[1]);const body=await readBody(req);const price=Number(body.price);const message=validateText(body.message,"Offer message",10,500);
     if(!Number.isInteger(price)||price<1||price>10000000)fail(400,"Enter your offer in whole taka.");
     const job=db.prepare("SELECT id,status,customer_id FROM jobs WHERE id=?").get(jobId);if(!job||job.status!=="open")fail(409,"This task is no longer accepting bids.");if(job.customer_id===user.id)fail(403,"You cannot bid on your own task.");
-    try {const result=db.prepare("INSERT INTO offers(job_id,worker_id,price,message) VALUES(?,?,?,?)").run(jobId,user.id,price,message);return send(res,201,{id:Number(result.lastInsertRowid)});}
+    try {
+      const result=db.prepare("INSERT INTO offers(job_id,worker_id,price,message) VALUES(?,?,?,?)").run(jobId,user.id,price,message);
+      notifyUser(job.customer_id, "New Offer Received", `${user.name} offered ৳${price} on your task.`, "offer", "/jobs");
+      return send(res,201,{id:Number(result.lastInsertRowid)});
+    }
     catch(error){if(String(error.message).includes("UNIQUE"))fail(409,"You already bid on this task.");throw error;}
   }
   const acceptMatch=url.pathname.match(/^\/api\/offers\/(\d+)\/accept$/);
   if(req.method==="POST"&&acceptMatch) {
     requireUser(user,["customer"]);const offerId=Number(acceptMatch[1]);const offer=db.prepare(`SELECT o.id,o.job_id FROM offers o JOIN jobs j ON j.id=o.job_id
       WHERE o.id=? AND j.customer_id=? AND j.status='open' AND o.status='pending'`).get(offerId,user.id);
-    if(!offer)fail(404,"That bid is no longer available.");db.exec("BEGIN IMMEDIATE");
+    if(!offer)fail(404,"That bid is no longer available.");
+    const workerRec = db.prepare("SELECT worker_id FROM offers WHERE id=?").get(offerId);
+    db.exec("BEGIN IMMEDIATE");
     try {db.prepare("UPDATE offers SET status=CASE WHEN id=? THEN 'accepted' ELSE 'declined' END WHERE job_id=?").run(offerId,offer.job_id);db.prepare("UPDATE jobs SET status='accepted' WHERE id=?").run(offer.job_id);db.exec("COMMIT");}
-    catch(error){db.exec("ROLLBACK");throw error;}return send(res,200,{ok:true});
+    catch(error){db.exec("ROLLBACK");throw error;}
+    if(workerRec) notifyUser(workerRec.worker_id, "Offer Accepted!", "Your offer was accepted! The customer contact phone and exact address are now unlocked.", "accepted", "/jobs");
+    return send(res,200,{ok:true});
   }
   const completeMatch=url.pathname.match(/^\/api\/jobs\/(\d+)\/complete$/);
   if(req.method==="POST"&&completeMatch) {
@@ -426,6 +560,151 @@ async function handleApi(req,res,url) {
   if(req.method==="PATCH"&&verifyMatch) {
     requireUser(user,["admin"]);const body=await readBody(req);const result=db.prepare("UPDATE users SET verified=? WHERE id=? AND role='worker'").run(body.verified?1:0,Number(verifyMatch[1]));if(!result.changes)fail(404,"Provider not found.");return send(res,200,{ok:true});
   }
+  // --- NID Verification Endpoints ---
+  if(req.method==="POST"&&url.pathname==="/api/nid/apply") {
+    requireUser(user);
+    const body=await readBody(req);
+    const front=String(body.nid_front||"").trim();
+    const back=String(body.nid_back||"").trim();
+    const selfie=String(body.selfie_nid||"").trim();
+    if(!front||!back||!selfie)fail(400,"All 3 photos (NID front, NID back, and selfie holding NID) are required.");
+    
+    // Check if existing pending
+    const existing = db.prepare("SELECT id, status FROM nid_verifications WHERE user_id=? ORDER BY created_at DESC LIMIT 1").get(user.id);
+    if(existing && existing.status === 'pending') {
+      db.prepare("UPDATE nid_verifications SET nid_front=?, nid_back=?, selfie_nid=?, created_at=CURRENT_TIMESTAMP WHERE id=?").run(front, back, selfie, existing.id);
+    } else {
+      db.prepare("INSERT INTO nid_verifications(user_id, nid_front, nid_back, selfie_nid) VALUES(?,?,?,?)").run(user.id, front, back, selfie);
+    }
+    notifyAdmins("New NID Verification", `${user.name} submitted NID photos for verification.`, "nid", "/admin");
+    return send(res,201,{ok:true,status:'pending',message:"NID application submitted for review."});
+  }
+  if(req.method==="GET"&&url.pathname==="/api/nid/status") {
+    requireUser(user);
+    const app = db.prepare("SELECT id, status, admin_notes, created_at, reviewed_at FROM nid_verifications WHERE user_id=? ORDER BY created_at DESC LIMIT 1").get(user.id);
+    return send(res,200,{application: app || null, verified: Boolean(user.verified)});
+  }
+  if(req.method==="GET"&&url.pathname==="/api/admin/nid-applications") {
+    requireUser(user,["admin"]);
+    const list = db.prepare(`SELECT n.id, n.user_id, n.nid_front, n.nid_back, n.selfie_nid, n.status, n.admin_notes, n.created_at, n.reviewed_at,
+      u.name, u.email, u.phone, u.area, u.role, u.category, u.verified
+      FROM nid_verifications n JOIN users u ON u.id=n.user_id ORDER BY CASE WHEN n.status='pending' THEN 0 ELSE 1 END, n.created_at DESC LIMIT 50`).all();
+    return send(res,200,list);
+  }
+  const nidReviewMatch = url.pathname.match(/^\/api\/admin\/nid-applications\/(\d+)$/);
+  if(req.method==="PATCH"&&nidReviewMatch) {
+    requireUser(user,["admin"]);
+    const appId = Number(nidReviewMatch[1]);
+    const body = await readBody(req);
+    const status = body.status === 'approved' ? 'approved' : 'rejected';
+    const notes = String(body.notes || '').trim().slice(0, 300);
+    const app = db.prepare("SELECT id, user_id FROM nid_verifications WHERE id=?").get(appId);
+    if(!app)fail(404,"Application not found.");
+    db.prepare("UPDATE nid_verifications SET status=?, admin_notes=?, reviewed_at=CURRENT_TIMESTAMP WHERE id=?").run(status, notes, appId);
+    if(status === 'approved') {
+      db.prepare("UPDATE users SET verified=1 WHERE id=?").run(app.user_id);
+      notifyUser(app.user_id, "NID Verification Approved!", "Congratulations! Your identity is verified and the trust badge has been awarded to your profile.", "verification");
+    } else {
+      notifyUser(app.user_id, "NID Verification Review", `Your verification application was not approved: ${notes || 'Please resubmit clearer photos.'}`, "verification");
+    }
+    return send(res,200,{ok:true});
+  }
+
+  // --- Inbox & Chat Endpoints ---
+  if(req.method==="GET"&&url.pathname==="/api/messages") {
+    requireUser(user);
+    const withUserId = url.searchParams.get("with") ? Number(url.searchParams.get("with")) : null;
+    if(withUserId) {
+      // Mark received messages from this user as read
+      db.prepare("UPDATE messages SET read=1 WHERE recipient_id=? AND sender_id=? AND read=0").run(user.id, withUserId);
+      const thread = db.prepare(`SELECT m.id, m.sender_id, m.recipient_id, m.job_id, m.content, m.read, m.created_at,
+        u.name as sender_name, u.role as sender_role
+        FROM messages m JOIN users u ON u.id=m.sender_id
+        WHERE (m.sender_id=? AND m.recipient_id=?) OR (m.sender_id=? AND m.recipient_id=?)
+        ORDER BY m.created_at ASC`).all(user.id, withUserId, withUserId, user.id);
+      const recipient = currentUser(withUserId);
+      return send(res,200,{messages: thread, recipient});
+    } else {
+      // Return conversations list with last message and unread count
+      const contacts = db.prepare(`SELECT DISTINCT CASE WHEN sender_id=? THEN recipient_id ELSE sender_id END as contact_id
+        FROM messages WHERE sender_id=? OR recipient_id=?`).all(user.id, user.id, user.id);
+      const list = contacts.map(c => {
+        const other = currentUser(c.contact_id);
+        if(!other) return null;
+        const lastMsg = db.prepare(`SELECT content, created_at, sender_id FROM messages
+          WHERE (sender_id=? AND recipient_id=?) OR (sender_id=? AND recipient_id=?)
+          ORDER BY created_at DESC LIMIT 1`).get(user.id, other.id, other.id, user.id);
+        const unread = db.prepare(`SELECT COUNT(*) as count FROM messages WHERE sender_id=? AND recipient_id=? AND read=0`).get(other.id, user.id).count;
+        return { user: other, last_message: lastMsg?.content || '', created_at: lastMsg?.created_at || '', unread };
+      }).filter(Boolean).sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+      return send(res,200,list);
+    }
+  }
+  if(req.method==="POST"&&url.pathname==="/api/messages") {
+    requireUser(user);
+    const body=await readBody(req);
+    const recipientId=Number(body.recipient_id);
+    const content=validateText(body.content,"Message",1,1000);
+    const jobId=body.job_id ? Number(body.job_id) : null;
+    const recipient = db.prepare("SELECT id, name FROM users WHERE id=?").get(recipientId);
+    if(!recipient)fail(404,"Recipient user not found.");
+    if(recipient.id===user.id)fail(400,"You cannot message yourself.");
+    const result=db.prepare("INSERT INTO messages(sender_id, recipient_id, job_id, content) VALUES(?,?,?,?)").run(user.id, recipientId, jobId, content);
+    notifyUser(recipientId, `New message from ${user.name}`, content.slice(0, 100), "chat", "/inbox");
+    return send(res,201,{ok:true,id:Number(result.lastInsertRowid)});
+  }
+
+  // --- Saved Posts (Bookmarks) Endpoints ---
+  if(req.method==="GET"&&url.pathname==="/api/saved-posts") {
+    requireUser(user);
+    const saved = db.prepare("SELECT target_type, target_id, created_at FROM saved_posts WHERE user_id=? ORDER BY created_at DESC").all(user.id);
+    const savedJobs = [];
+    const savedWorkers = [];
+    saved.forEach(s => {
+      if(s.target_type === 'job') {
+        const j = db.prepare("SELECT id, customer_id, title, category, details, area, budget, status, created_at FROM jobs WHERE id=?").get(s.target_id);
+        if(j) savedJobs.push(j);
+      } else if(s.target_type === 'worker') {
+        const w = db.prepare("SELECT id, name, category, bio, rate, experience, area, verified, availability FROM users WHERE id=? AND role='worker'").get(s.target_id);
+        if(w) savedWorkers.push(w);
+      }
+    });
+    return send(res,200,{jobs: savedJobs, workers: savedWorkers, total: saved.length});
+  }
+  if(req.method==="POST"&&url.pathname==="/api/saved-posts/toggle") {
+    requireUser(user);
+    const body=await readBody(req);
+    const type=body.target_type === 'worker' ? 'worker' : 'job';
+    const id=Number(body.target_id);
+    const existing = db.prepare("SELECT id FROM saved_posts WHERE user_id=? AND target_type=? AND target_id=?").get(user.id, type, id);
+    if(existing) {
+      db.prepare("DELETE FROM saved_posts WHERE id=?").run(existing.id);
+      return send(res,200,{ok:true,saved:false});
+    } else {
+      db.prepare("INSERT INTO saved_posts(user_id, target_type, target_id) VALUES(?,?,?)").run(user.id, type, id);
+      return send(res,201,{ok:true,saved:true});
+    }
+  }
+
+  // --- Notifications Endpoints ---
+  if(req.method==="GET"&&url.pathname==="/api/notifications") {
+    requireUser(user);
+    const list = db.prepare("SELECT id, title, message, type, link, read, created_at FROM notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 50").all(user.id);
+    const unread = db.prepare("SELECT COUNT(*) as count FROM notifications WHERE user_id=? AND read=0").get(user.id).count;
+    return send(res,200,{notifications: list, unread});
+  }
+  const notifReadMatch = url.pathname.match(/^\/api\/notifications\/(\d+)\/read$/);
+  if(req.method==="PATCH"&&notifReadMatch) {
+    requireUser(user);
+    db.prepare("UPDATE notifications SET read=1 WHERE id=? AND user_id=?").run(Number(notifReadMatch[1]), user.id);
+    return send(res,200,{ok:true});
+  }
+  if(req.method==="POST"&&url.pathname==="/api/notifications/read-all") {
+    requireUser(user);
+    db.prepare("UPDATE notifications SET read=1 WHERE user_id=?").run(user.id);
+    return send(res,200,{ok:true});
+  }
+
   return send(res,404,{message:"That API route was not found."});
 }
 
