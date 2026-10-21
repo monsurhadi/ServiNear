@@ -2396,9 +2396,468 @@ function bindEvents() {
 // 13. INITIALIZATION
 // ==========================================================================
 
+
+// ==========================================================================
+// 14. NATIVE WEBSOCKET REAL-TIME CLIENT (ZERO COST)
+// ==========================================================================
+let appWs = null;
+let wsPingInterval = null;
+
+function initWebSocket() {
+  if (appWs && appWs.readyState === WebSocket.OPEN) return;
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = `${protocol}//${window.location.host}`;
+
+  try {
+    appWs = new WebSocket(wsUrl);
+
+    appWs.onopen = () => {
+      console.log("[ServiNear WS] Real-time engine connected");
+      clearInterval(wsPingInterval);
+      wsPingInterval = setInterval(() => {
+        if (appWs && appWs.readyState === WebSocket.OPEN) {
+          appWs.send(JSON.stringify({ type: "ping" }));
+        }
+      }, 30000);
+    };
+
+    appWs.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === "chat_message") {
+          handleIncomingChatMessage(data.message);
+        } else if (data.type === "typing") {
+          handleIncomingTyping(data);
+        } else if (data.type === "notification") {
+          handleIncomingNotification(data.notification);
+        }
+      } catch (err) {
+        console.error("[ServiNear WS] Parse error:", err);
+      }
+    };
+
+    appWs.onclose = () => {
+      clearInterval(wsPingInterval);
+      // Auto reconnect after 3 seconds
+      setTimeout(initWebSocket, 3000);
+    };
+
+    appWs.onerror = () => {
+      appWs.close();
+    };
+  } catch (e) {
+    console.warn("[ServiNear WS] Connection failed, fallback to polling:", e);
+  }
+}
+
+function sendWsTyping(peerId, isTyping, jobId = null) {
+  if (appWs && appWs.readyState === WebSocket.OPEN) {
+    appWs.send(JSON.stringify({
+      type: "typing",
+      peer_id: peerId,
+      is_typing: Boolean(isTyping),
+      job_id: jobId
+    }));
+  }
+}
+
+function handleIncomingChatMessage(msg) {
+  if (state.inbox && state.inbox.activePeerId === msg.sender_id) {
+    // Current thread is open, append message
+    const msgsContainer = $("#chat-messages-container");
+    if (msgsContainer) {
+      const bubble = document.createElement("div");
+      bubble.className = "message-bubble incoming";
+      bubble.innerHTML = `<p>${escapeHtml(msg.content || msg.message)}</p><span class="message-time">Just now</span>`;
+      msgsContainer.appendChild(bubble);
+      msgsContainer.scrollTop = msgsContainer.scrollHeight;
+    }
+  } else {
+    // Other page or different thread
+    state.unreadMessages = (state.unreadMessages || 0) + 1;
+    updateBadges();
+    toast(`New message: ${(msg.content || msg.message || "").slice(0, 50)}`);
+  }
+}
+
+function handleIncomingTyping(data) {
+  if (state.inbox && state.inbox.activePeerId === data.sender_id) {
+    let indicator = $("#chat-typing-indicator");
+    if (!indicator) {
+      indicator = document.createElement("div");
+      indicator.id = "chat-typing-indicator";
+      indicator.className = "text-xs text-muted p-2 italic";
+      $("#chat-messages-container")?.parentElement?.appendChild(indicator);
+    }
+    if (data.is_typing) {
+      indicator.textContent = "Writing a message...";
+      indicator.classList.remove("hidden");
+    } else {
+      indicator.classList.add("hidden");
+    }
+  }
+}
+
+function handleIncomingNotification(notif) {
+  state.unreadNotifications = (state.unreadNotifications || 0) + 1;
+  updateBadges();
+  toast(`${notif.title}: ${notif.message}`);
+  if (typeof loadNotifications === "function") loadNotifications();
+}
+
+// ==========================================================================
+// 15. AI CUSTOMER CARE CHATBOT (NEARBOT / SERVI-AI)
+// ==========================================================================
+function initAIChatbot() {
+  const triggerBtn = $("#ai-chat-trigger");
+  const chatWindow = $("#ai-chat-window");
+  const closeBtn = $("#ai-chat-close");
+  const clearBtn = $("#ai-chat-clear");
+  const form = $("#ai-chat-form");
+  const input = $("#ai-chat-input");
+  const messagesContainer = $("#ai-chat-messages");
+  const chipsContainer = $("#ai-quick-chips");
+
+  if (!triggerBtn || !chatWindow) return;
+
+  triggerBtn.addEventListener("click", () => {
+    chatWindow.classList.toggle("hidden");
+    if (!chatWindow.classList.contains("hidden")) {
+      input?.focus();
+      refreshIcons(chatWindow);
+    }
+  });
+
+  closeBtn?.addEventListener("click", () => {
+    chatWindow.classList.add("hidden");
+  });
+
+  clearBtn?.addEventListener("click", () => {
+    if (messagesContainer) {
+      messagesContainer.innerHTML = `
+        <div class="ai-message-row bot-row">
+          <div class="ai-msg-avatar"><i data-lucide="bot"></i></div>
+          <div class="ai-msg-bubble">
+            <p><strong>আসসালামু আলাইকুম!</strong> চ্যাট রিসেট করা হয়েছে। আপনাকে কীভাবে সাহায্য করতে পারি?</p>
+            <p class="text-xs text-muted">Chat cleared. Ask anything in Bangla or English!</p>
+          </div>
+        </div>
+      `;
+      refreshIcons(messagesContainer);
+    }
+  });
+
+  // Chip quick action buttons
+  chipsContainer?.addEventListener("click", (e) => {
+    const chip = e.target.closest(".ai-chip");
+    if (!chip) return;
+    const prompt = chip.dataset.prompt;
+    if (prompt) {
+      sendAIMessage(prompt);
+    }
+  });
+
+  form?.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = "";
+    sendAIMessage(text);
+  });
+
+  // Action buttons inside bot messages (e.g. "+ Post Task", "View Wallet", etc.)
+  messagesContainer?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-ai-action]");
+    if (!btn) return;
+    const action = btn.dataset.aiAction;
+    if (action === "open_post") {
+      openJobDialog();
+      chatWindow.classList.add("hidden");
+    } else if (action === "open_nid") {
+      openNidDialog();
+      chatWindow.classList.add("hidden");
+    } else if (action === "open_wallet") {
+      navigate("/profile");
+      setTimeout(() => renderWalletSection(), 200);
+      chatWindow.classList.add("hidden");
+    } else if (action === "browse") {
+      navigate("/categories");
+      chatWindow.classList.add("hidden");
+    } else if (action === "open_help") {
+      navigate("/help");
+      chatWindow.classList.add("hidden");
+    }
+  });
+}
+
+async function sendAIMessage(userText) {
+  const messagesContainer = $("#ai-chat-messages");
+  if (!messagesContainer) return;
+
+  // 1. Append user message bubble
+  const userRow = document.createElement("div");
+  userRow.className = "ai-message-row user-row";
+  userRow.innerHTML = `<div class="ai-msg-bubble"><p>${escapeHtml(userText)}</p></div>`;
+  messagesContainer.appendChild(userRow);
+
+  // 2. Append typing indicator
+  const typingRow = document.createElement("div");
+  typingRow.className = "ai-message-row bot-row";
+  typingRow.id = "ai-typing-temp";
+  typingRow.innerHTML = `
+    <div class="ai-msg-avatar"><i data-lucide="bot"></i></div>
+    <div class="ai-msg-bubble"><p class="italic text-muted">Thinking...</p></div>
+  `;
+  messagesContainer.appendChild(typingRow);
+  refreshIcons(typingRow);
+  messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+  try {
+    const res = await post("/api/ai/chat", { message: userText });
+    typingRow.remove();
+
+    const botRow = document.createElement("div");
+    botRow.className = "ai-message-row bot-row";
+
+    // Format Markdown bolding & line breaks
+    const formattedReply = res.reply
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.*?)\*/g, '<em>$1</em>')
+      .replace(/\n/g, '<br>');
+
+    let actionBtnsHtml = "";
+    if (res.suggested_actions && res.suggested_actions.length > 0) {
+      actionBtnsHtml = `<div class="flex flex-wrap gap-2 mt-3 pt-2 border-t border-slate-100">
+        ${res.suggested_actions.map(a => `<button class="button-quiet text-xs font-bold" data-ai-action="${a.action}">${escapeHtml(a.label)} &rarr;</button>`).join("")}
+      </div>`;
+    }
+
+    botRow.innerHTML = `
+      <div class="ai-msg-avatar"><i data-lucide="bot"></i></div>
+      <div class="ai-msg-bubble">
+        <p>${formattedReply}</p>
+        ${actionBtnsHtml}
+      </div>
+    `;
+    messagesContainer.appendChild(botRow);
+    refreshIcons(botRow);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+  } catch (err) {
+    typingRow.remove();
+    const errRow = document.createElement("div");
+    errRow.className = "ai-message-row bot-row";
+    errRow.innerHTML = `
+      <div class="ai-msg-avatar"><i data-lucide="bot"></i></div>
+      <div class="ai-msg-bubble text-red-600"><p>Sorry, could not process request right now. Please try again.</p></div>
+    `;
+    messagesContainer.appendChild(errRow);
+    refreshIcons(errRow);
+  }
+}
+
+// ==========================================================================
+// 16. ESCROW & WALLET SYSTEM (MOCK BKASH/NAGAD + OTP RELEASE)
+// ==========================================================================
+let pendingEscrowOffer = null;
+
+function openEscrowModal(offerId, workerName, amount) {
+  pendingEscrowOffer = { offerId, workerName, amount };
+  const modal = $("#escrow-modal");
+  if (!modal) return;
+
+  $("#escrow-worker-name").textContent = workerName;
+  $("#escrow-amount").textContent = `৳${amount.toLocaleString()}`;
+  modal.showModal();
+  refreshIcons(modal);
+}
+
+async function confirmEscrowDeposit() {
+  if (!pendingEscrowOffer) return;
+  const btn = $("#confirm-escrow-btn");
+  const modal = $("#escrow-modal");
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await post(`/api/offers/${pendingEscrowOffer.offerId}/accept`, {});
+    modal?.close();
+
+    const otp = res.escrow?.release_otp;
+    toast(state.lang === "bn" ? 
+      `অফার গ্রহণ করা হয়েছে! রিলিজ OTP: ${otp}` : 
+      `Offer accepted & escrow locked! Completion OTP: ${otp}`
+    );
+
+    await reload();
+    if (state.selectedJob) renderTaskDetail(state.selectedJob);
+  } catch (err) {
+    toast(err.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function openOtpReleaseModal(jobId) {
+  const modal = $("#otp-release-modal");
+  if (!modal) return;
+  $("#otp-job-id").value = jobId;
+  $("#otp-input").value = "";
+  $("#otp-release-message").textContent = "";
+  modal.showModal();
+  refreshIcons(modal);
+}
+
+async function handleOtpReleaseSubmit(e) {
+  e.preventDefault();
+  const jobId = $("#otp-job-id").value;
+  const otp = $("#otp-input").value.trim();
+  const msgEl = $("#otp-release-message");
+  if (!otp || otp.length !== 6) {
+    if (msgEl) msgEl.textContent = "Please enter valid 6-digit OTP.";
+    return;
+  }
+
+  try {
+    const res = await post(`/api/jobs/${jobId}/release-escrow`, { otp });
+    $("#otp-release-modal")?.close();
+    toast(state.lang === "bn" ? 
+      `সফল! ৳${res.amount} আপনার ওয়ালেটে যুক্ত হয়েছে।` : 
+      `Success! ৳${res.amount} added to your wallet balance.`
+    );
+    await reload();
+    if (state.selectedJob) renderTaskDetail(state.selectedJob);
+  } catch (err) {
+    if (msgEl) msgEl.textContent = err.message;
+  }
+}
+
+async function renderWalletSection() {
+  const container = $("#profile-workspace");
+  if (!container) return;
+
+  try {
+    const data = await api("/api/wallet");
+    const balance = data.wallet?.balance || 0;
+    const locked = data.wallet?.locked_escrow || 0;
+    const history = data.history || [];
+    const isWorker = state.user?.role === "worker";
+
+    container.innerHTML = `
+      <div class="workspace-section">
+        <div class="section-header-compact">
+          <h2 class="text-xl font-bold">${state.lang === "bn" ? "ওয়ালেট ও এসক্রো ব্যালেন্স" : "Wallet & Escrow Balance"}</h2>
+          <p class="text-xs text-muted">${state.lang === "bn" ? "নিরাপদ লেনদেন ও তাত্ক্ষণিক ক্যাশআউট।" : "Secure transactions and simulated instant payouts."}</p>
+        </div>
+
+        <div class="wallet-grid">
+          <div class="wallet-balance-card card-primary">
+            <span class="wallet-label">${state.lang === "bn" ? "উপলব্ধ ব্যালেন্স" : "Available Balance"}</span>
+            <span class="wallet-val">৳${balance.toLocaleString()}</span>
+            <div class="wallet-actions-row">
+              ${isWorker ? `
+                <button class="button button-quiet text-xs text-white border border-white/30" id="withdraw-btn" type="button">
+                  <i data-lucide="arrow-up-right"></i> ${state.lang === "bn" ? "টাকা তুলুন (Withdraw)" : "Request Payout"}
+                </button>
+              ` : `
+                <span class="text-xs text-teal-100">Ready for task payments</span>
+              `}
+            </div>
+          </div>
+
+          <div class="wallet-balance-card">
+            <span class="wallet-label">${state.lang === "bn" ? "এসক্রো লকড ফান্ড" : "Locked in Escrow"}</span>
+            <span class="wallet-val text-amber-600">৳${locked.toLocaleString()}</span>
+            <p class="text-xs text-muted mt-1">${state.lang === "bn" ? "কাজ শেষ হলে ওটিপি যাচাইয়ের মাধ্যমে রিলিজ হবে।" : "Released to worker upon OTP completion verification."}</p>
+          </div>
+        </div>
+
+        ${isWorker ? `
+          <div class="card p-4 mb-6 hidden" id="withdraw-card">
+            <h3 class="font-bold text-sm mb-2">${state.lang === "bn" ? "বিকাশ / নগদ পেআউট আবেদন" : "Request MFS Payout"}</h3>
+            <form id="withdraw-form" class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <label class="form-field">
+                <span>Method</span>
+                <select name="method" class="select-field">
+                  <option value="bKash">bKash Personal</option>
+                  <option value="Nagad">Nagad Personal</option>
+                </select>
+              </label>
+              <label class="form-field">
+                <span>Phone</span>
+                <input type="text" name="phone" required placeholder="01712345678" value="${escapeHtml(state.user.phone || '')}">
+              </label>
+              <label class="form-field">
+                <span>Amount (৳)</span>
+                <input type="number" name="amount" min="100" max="${balance}" required placeholder="500">
+              </label>
+              <div class="col-span-full">
+                <button class="button button-rust text-xs" type="submit">Submit Withdrawal</button>
+              </div>
+            </form>
+          </div>
+        ` : ""}
+
+        <div class="card p-4">
+          <h3 class="font-bold text-sm mb-2">${state.lang === "bn" ? "সাম্প্রতিক লেনদেন ইতিহাস" : "Recent Transactions"}</h3>
+          ${history.length === 0 ? `
+            <p class="text-xs text-muted p-4 text-center">No transactions recorded yet.</p>
+          ` : `
+            <div class="table-responsive">
+              <table class="trx-table">
+                <thead>
+                  <tr>
+                    <th>Type</th>
+                    <th>Amount</th>
+                    <th>Method</th>
+                    <th>Details</th>
+                    <th>Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${history.map(t => `
+                    <tr>
+                      <td class="font-bold ${t.type.includes('release') || t.type === 'deposit' ? 'text-green' : 'text-slate-700'}">${escapeHtml(t.type)}</td>
+                      <td class="font-bold">৳${t.amount.toLocaleString()}</td>
+                      <td>${escapeHtml(t.payment_method || '-')}</td>
+                      <td>${escapeHtml(t.details || '-')}</td>
+                      <td class="text-xs text-muted">${timeAgo(t.created_at)}</td>
+                    </tr>
+                  `).join("")}
+                </tbody>
+              </table>
+            </div>
+          `}
+        </div>
+      </div>
+    `;
+
+    refreshIcons(container);
+
+    $("#withdraw-btn")?.addEventListener("click", () => {
+      $("#withdraw-card")?.classList.toggle("hidden");
+    });
+
+    $("#withdraw-form")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      try {
+        await post("/api/wallet/withdraw", Object.fromEntries(fd));
+        toast("Withdrawal requested successfully!");
+        renderWalletSection();
+      } catch (err) {
+        toast(err.message);
+      }
+    });
+
+  } catch (err) {
+    container.innerHTML = `<div class="p-4 text-red-600">Failed to load wallet: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
 async function init() {
   try {
     bindEvents();
+    initWebSocket();
+    initAIChatbot();
     Object.assign(state, await api("/api/bootstrap"));
     setLanguage(state.lang);
     if (state.user && $("#support-form")) {

@@ -382,6 +382,7 @@
               <li><a href="/categories" data-route class="profile-nav-item"><i data-lucide="layout-grid" class="icon-purple"></i> <span data-i18n="navDokan">All Categories</span></a></li>
               <li><button class="profile-nav-item" data-profile-section="tasks" type="button"><i data-lucide="package" class="icon-orange"></i> <span data-i18n="navMyOrders">My Orders &amp; Work</span></button></li>
               <li><a href="/saved" data-route class="profile-nav-item"><i data-lucide="bookmark" class="icon-green"></i> <span data-i18n="navSavedPosts">Saved Posts</span></a></li>
+              <li><button class="profile-nav-item" id="sidebar-wallet-btn" data-profile-section="wallet" type="button"><i data-lucide="wallet" class="icon-orange"></i> <span data-i18n="navWallet">Wallet &amp; Escrow</span></button></li>
               <li><button class="profile-nav-item" id="sidebar-verify-btn" type="button"><i data-lucide="shield-check" class="icon-teal"></i> <span data-i18n="navGetVerified">Get Verified (NID)</span></button></li>
               <li><button class="profile-nav-item" id="sidebar-settings-btn" type="button"><i data-lucide="settings" class="icon-teal"></i> <span data-i18n="navSettings">Settings</span></button></li>
               <li><a href="/help" data-route class="profile-nav-item"><i data-lucide="life-buoy" class="icon-blue"></i> <span data-i18n="navSupportTeam">Support Team</span></a></li>
@@ -966,6 +967,123 @@
 
   <!-- Hidden Profile Photo Input for Settings Tab -->
   <input type="file" id="profile-photo-file-input" accept="image/*" class="hidden">
+
+    <!-- Escrow Payment Deposit Modal (bKash/Nagad Mock Sandbox) -->
+  <dialog class="modal-dialog" id="escrow-modal">
+    <div class="dialog-content escrow-modal-card">
+      <button class="icon-button dialog-close" data-close-dialog type="button" aria-label="Close dialog"><i data-lucide="x"></i></button>
+      <div class="escrow-badge"><i data-lucide="shield-check"></i> 100% Buyer Protection</div>
+      <h2 id="escrow-modal-title">Accept Offer &amp; Lock Escrow</h2>
+      <p class="dialog-copy" id="escrow-modal-desc">Funds are held safely in ServiNear Escrow and only released when the technician completes the work on-site.</p>
+      
+      <div class="escrow-summary-box">
+        <div class="escrow-sum-row">
+          <span>Technician / Worker:</span>
+          <strong id="escrow-worker-name">-</strong>
+        </div>
+        <div class="escrow-sum-row">
+          <span>Agreed Price:</span>
+          <strong class="escrow-amount" id="escrow-amount">৳0</strong>
+        </div>
+        <div class="escrow-sum-row">
+          <span>Platform Markup:</span>
+          <strong class="text-green font-bold">৳0 (100% FREE)</strong>
+        </div>
+      </div>
+
+      <div class="mfs-selector">
+        <label class="mfs-radio active">
+          <input type="radio" name="escrow_mfs" value="bKash" checked>
+          <span class="mfs-logo-pill bkash-pill">bKash</span>
+          <span>Instant Checkout (Sandbox)</span>
+        </label>
+        <label class="mfs-radio">
+          <input type="radio" name="escrow_mfs" value="Nagad">
+          <span class="mfs-logo-pill nagad-pill">Nagad</span>
+          <span>Instant Checkout (Sandbox)</span>
+        </label>
+      </div>
+
+      <div class="escrow-actions">
+        <button class="button button-rust full-width" id="confirm-escrow-btn" type="button">
+          <i data-lucide="lock"></i> <span id="confirm-escrow-text">Deposit &amp; Lock in Escrow</span>
+        </button>
+      </div>
+      <p class="text-xs text-center text-muted mt-2">Zero platform fees · Client receives 6-digit release OTP</p>
+    </div>
+  </dialog>
+
+  <!-- Escrow Release OTP Modal (Worker verification) -->
+  <dialog class="modal-dialog" id="otp-release-modal">
+    <div class="dialog-content">
+      <button class="icon-button dialog-close" data-close-dialog type="button" aria-label="Close dialog"><i data-lucide="x"></i></button>
+      <div class="escrow-badge"><i data-lucide="key-round"></i> Work Completion Verification</div>
+      <h2>Enter Client Completion OTP</h2>
+      <p class="dialog-copy">Ask the customer for the 6-digit completion OTP they received upon work order confirmation.</p>
+      <form id="otp-release-form">
+        <input type="hidden" id="otp-job-id" name="job_id">
+        <label class="form-field">
+          <span>6-Digit Release OTP</span>
+          <input type="text" id="otp-input" name="otp" pattern="\d{6}" maxlength="6" required placeholder="e.g. 583921" class="text-center text-lg font-bold tracking-widest">
+        </label>
+        <button class="button button-teal full-width mt-3" type="submit"><i data-lucide="check-circle-2"></i> Verify &amp; Release Earnings</button>
+        <p class="inline-message mt-2" id="otp-release-message" role="status"></p>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- AI Customer Care Chatbot Floating Widget -->
+  <div class="ai-chatbot-container" id="ai-chatbot-container">
+    <button class="ai-chat-trigger-btn" id="ai-chat-trigger" type="button" aria-label="Open ServiNear AI Assistant" title="ServiNear AI Helper">
+      <div class="ai-btn-pulse"></div>
+      <i data-lucide="sparkles" class="ai-icon-sparkle"></i>
+      <span class="ai-btn-label">AI Helper</span>
+      <span class="ai-badge-live">LIVE</span>
+    </button>
+
+    <div class="ai-chat-window hidden" id="ai-chat-window" role="dialog" aria-label="ServiNear Customer Care AI">
+      <div class="ai-chat-header">
+        <div class="ai-header-info">
+          <div class="ai-header-avatar">
+            <i data-lucide="bot"></i>
+          </div>
+          <div>
+            <div class="ai-header-title">ServiNear AI Care</div>
+            <div class="ai-header-status"><span class="status-dot-green"></span> 24/7 Virtual Assistant · বাংলা ও English</div>
+          </div>
+        </div>
+        <div class="ai-header-actions">
+          <button class="ai-hdr-btn" id="ai-chat-clear" title="Clear chat" type="button"><i data-lucide="rotate-ccw"></i></button>
+          <button class="ai-hdr-btn" id="ai-chat-close" title="Close" type="button"><i data-lucide="x"></i></button>
+        </div>
+      </div>
+
+      <div class="ai-chat-messages" id="ai-chat-messages">
+        <div class="ai-message-row bot-row">
+          <div class="ai-msg-avatar"><i data-lucide="bot"></i></div>
+          <div class="ai-msg-bubble">
+            <p><strong>আসসালামু আলাইকুম!</strong> আমি ServiNear AI কাস্টমার কেয়ার অ্যাসিস্ট্যান্ট। কীভাবে আপনাকে সাহায্য করতে পারি?</p>
+            <p class="text-xs text-muted">I can help you find verified tradesmen, post a task, explain NID verification, or answer questions about our zero-markup escrow safety!</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Suggested Chips -->
+      <div class="ai-quick-chips" id="ai-quick-chips">
+        <button class="ai-chip" type="button" data-prompt="কীভাবে কাজ পোস্ট করব?">⚡ কাজ পোস্টের নিয়ম</button>
+        <button class="ai-chip" type="button" data-prompt="NID ভেরিফিকেশন কীভাবে করব?">🛡️ NID ভেরিফিকেশন</button>
+        <button class="ai-chip" type="button" data-prompt="এসি সার্ভিসিং কারিগড় খুঁজছি">❄️ এসি সার্ভিসিং</button>
+        <button class="ai-chip" type="button" data-prompt="পেমেন্ট ও এসক্রো কীভাবে নিরাপদ?">💰 এসক্রো ও পেমেন্ট</button>
+      </div>
+
+      <form class="ai-chat-input-form" id="ai-chat-form">
+        <input type="text" id="ai-chat-input" placeholder="আপনার প্রশ্ন লিখুন (Ask in Bangla or English)..." autocomplete="off" required>
+        <button type="submit" class="ai-send-btn" id="ai-chat-send" aria-label="Send message">
+          <i data-lucide="send"></i>
+        </button>
+      </form>
+    </div>
+  </div>
 
   <!-- Mobile Bottom Navigation Bar (Fluid PC & Mobile UX Ratio) -->
   <nav class="mobile-nav-bar" id="mobile-nav-bar">

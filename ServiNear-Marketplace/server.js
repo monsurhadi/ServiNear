@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
+const { WebSocketServer } = require("ws");
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
@@ -149,6 +150,37 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(sender_id, recipient_id, created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id, read, created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_nid_status ON nid_verifications(status, created_at DESC);
+  CREATE TABLE IF NOT EXISTS wallets (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    balance INTEGER NOT NULL DEFAULT 0,
+    locked_escrow INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE TABLE IF NOT EXISTS escrows (
+    id INTEGER PRIMARY KEY,
+    job_id INTEGER UNIQUE NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    offer_id INTEGER REFERENCES offers(id) ON DELETE SET NULL,
+    customer_id INTEGER NOT NULL REFERENCES users(id),
+    worker_id INTEGER NOT NULL REFERENCES users(id),
+    amount INTEGER NOT NULL,
+    release_otp TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'held' CHECK(status IN ('held','released','refunded')),
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    released_at TEXT
+  );
+  CREATE TABLE IF NOT EXISTS transactions (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type TEXT NOT NULL CHECK(type IN ('deposit','escrow_hold','escrow_release','withdrawal','refund')),
+    amount INTEGER NOT NULL,
+    payment_method TEXT,
+    trx_id TEXT,
+    details TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_escrow_job ON escrows(job_id, status);
+  CREATE INDEX IF NOT EXISTS idx_trx_user ON transactions(user_id, created_at DESC);
+
 `);
 
 function ensureColumn(table, column, definition) {
@@ -460,6 +492,7 @@ function currentUser(id) {
 function notifyUser(userId, title, message, type = "system", link = null) {
   try {
     db.prepare("INSERT INTO notifications(user_id,title,message,type,link) VALUES(?,?,?,?,?)").run(userId, title, message, type, link);
+    sendToUser(userId, { type: "notification", notification: { title, message, type, link, created_at: new Date().toISOString() } });
   } catch(e) { console.error("Notification error:", e); }
 }
 function notifyAdmins(title, message, type = "admin", link = null) {
@@ -475,6 +508,78 @@ function getSession(req) {
   session.expiresAt=Date.now()+SESSION_TTL*1000;
   return currentUser(session.user.id);
 }
+function ensureWallet(userId) {
+  db.prepare("INSERT OR IGNORE INTO wallets(user_id, balance, locked_escrow) VALUES(?,0,0)").run(userId);
+}
+
+function generateAIResponse(query, vectorMatches = [], user = null) {
+  const q = String(query || "").toLowerCase();
+  const isBangla = /[\u0980-\u09FF]/.test(query);
+
+  const isHowToPost = q.includes("post") || q.includes("পোস্ট") || q.includes("কাজ") || q.includes("হায়ার") || q.includes("hire");
+  const isNid = q.includes("nid") || q.includes("verify") || q.includes("ভেরিফাই") || q.includes("পরিচয়") || q.includes("জাতীয়");
+  const isPayment = q.includes("escrow") || q.includes("এসক্রো") || q.includes("টাকা") || q.includes("payment") || q.includes("bkash") || q.includes("বিকাশ") || q.includes("nagad") || q.includes("নগদ") || q.includes("নিরাপদ");
+  const isHelp = q.includes("helpline") || q.includes("help") || q.includes("সাহায্য") || q.includes("হেল্প") || q.includes("যোগাযোগ") || q.includes("contact");
+
+  let replyText = "";
+  let suggestedActions = [];
+
+  if (isNid) {
+    if (isBangla) {
+      replyText = "**🛡️ ServiNear NID ভেরিফিকেশন নির্দেশিকা:**\n\n১. প্রোফাইলে গিয়ে **\"Get Verified (NID)\"** বাটনে ক্লিক করুন।\n২. আপনার জাতীয় পরিচয়পত্রের সামনের ও পেছনের স্পষ্ট ছবি এবং NID হাতে নিয়ে একটি সেলফি আপলোড করুন।\n৩. অ্যাডমিন ২ ঘণ্টার মধ্যে যাচাই করে প্রোফাইলে **\"100% ID Verified Trades\"** ট্রাস্ট ব্যাজ যুক্ত করে দেবে।";
+    } else {
+      replyText = "**🛡️ ServiNear NID Verification Guide:**\n\n1. Go to your Profile and click **\"Get Verified (NID)\"**.\n2. Upload 3 photos: NID Front, NID Back, and a Selfie holding your NID.\n3. Our admin team reviews and grants the **100% ID Verified** badge within 2 hours.\n\n*Verified workers get 4x more customer bookings!*";
+    }
+    suggestedActions.push({ label: isBangla ? "NID আবেদন করুন" : "Apply for NID", action: "open_nid" });
+  } else if (isPayment) {
+    if (isBangla) {
+      replyText = "**💰 নিরাপদ এসক্রো ও জিরো প্ল্যাটফর্ম ফি:**\n\n১. **এসক্রো নিরাপত্তা:** কারিগরের বিড গ্রহণ করলে টাকা ServiNear এসক্রো ভল্টে জমা থাকে, সরাসরি কারিগরের হাতে যায় না।\n২. **রিলিজ OTP:** কাজের অর্ডার নিশ্চিত হলে আপনি একটি **৬ ডিজিটের রিলিজ কোড (OTP)** পাবেন।\n৩. **কাজ শেষে রিলিজ:** কারিগর বাসায় এসে কাজ সম্পন্ন করার পর আপনি যাচাই করে কারিগরকে সেই OTP দিলে টাকা কারিগরের ওয়ালেটে ট্রান্সফার হয়।\n\n*গ্রাহকদের জন্য সম্পূর্ণ ০% কমিশন!*";
+    } else {
+      replyText = "**💰 Safe Escrow & Zero Platform Markup:**\n\n1. **Escrow Protection:** When you accept a bid, funds are deposited into ServiNear's protected Escrow vault.\n2. **Completion OTP:** You immediately receive a **6-digit Release OTP**.\n3. **Inspection & Release:** When work is complete on-site, share the 6-digit OTP with the technician to release the funds.\n\n*Zero platform markup for clients. 100% safe with simulated bKash/Nagad checkout!*";
+    }
+    suggestedActions.push({ label: isBangla ? "ওয়ালেট দেখুন" : "View Wallet", action: "open_wallet" });
+  } else if (isHowToPost) {
+    if (isBangla) {
+      replyText = "**⚡ কীভাবে কাজ পোস্ট করবেন:**\n\n১. হেডার থেকে **\"+ Post task\"** বাটনে ক্লিক করুন।\n২. কাজের ক্যাটাগরি (এসি, ইলেক্ট্রিক্যাল, প্লাম্বিং ইত্যাদি) সিলেক্ট করুন।\n৩. আপনার এলাকা (যেমন: ধানমন্ডি, মিরপুর ১০, উত্তরা) এবং আনুমানিক বাজেট লিখুন।\n৪. কয়েক মিনিটের মধ্যে বিশ্বস্ত কারিগররা তাদের সর্বনিম্ন অফার পাঠাবে।\n৫. প্রোফাইল ও রিভিউ দেখে সরাসরি চ্যাট করে অফার একসেপ্ট করুন।";
+    } else {
+      replyText = "**⚡ How to Post a Task on ServiNear:**\n\n1. Click the **\"+ Post task\"** button on the header.\n2. Select your category (e.g. Electrical, Appliances, Plumbing, IT).\n3. Enter your area (e.g. Dhanmondi, Mirpur, Uttara) and budget in BDT.\n4. Verified local tradesmen will send competing bids within minutes.\n5. Review ratings, chat directly, and accept with 1-click escrow protection!";
+    }
+    suggestedActions.push({ label: isBangla ? "+ কাজ পোস্ট করুন" : "+ Post a Task", action: "open_post" });
+  } else if (isHelp) {
+    if (isBangla) {
+      replyText = "**📞 ServiNear ২৪/৭ হেল্পলাইন:**\n\n- **হটলাইন:** +880 1711-000001 (সকাল ৯টা - রাত ৯টা)\n- **ইমেইল:** support@servinear.local\n- **অফিস:** বনানী রোড ১১, ঢাকা ১২১৩\n- যেকোনো অভিযোগ বা সহযোগিতায় হেল্পলাইন থেকে সাপোর্ট টিকিট পাঠাতে পারেন।";
+    } else {
+      replyText = "**📞 ServiNear 24/7 Helpline & Support:**\n\n- **Hotline:** +880 1711-000001 (9 AM - 9 PM daily)\n- **Email:** support@servinear.local\n- **Office:** Road 11, Banani, Dhaka 1213\n- You can also submit an instant ticket via the Help page.";
+    }
+    suggestedActions.push({ label: isBangla ? "হেল্পলাইন দেখুন" : "Support Helpline", action: "open_help" });
+  } else {
+    let recsText = "";
+    if (vectorMatches && vectorMatches.length > 0) {
+      const topMatch = vectorMatches[0];
+      if (isBangla) {
+        recsText = `\n\n🎯 **প্রাসঙ্গিক সার্ভিস:** ${topMatch.title} (${topMatch.category}) - এলাকা: ${topMatch.area || "ঢাকা"}`;
+      } else {
+        recsText = `\n\n🎯 **Matching service:** ${topMatch.title} (${topMatch.category}) - Area: ${topMatch.area || "Dhaka"}`;
+      }
+    }
+    if (isBangla) {
+      replyText = `ধন্যবাদ! ServiNear AI অ্যাসিস্ট্যান্ট আপনাকে স্বাগতম জানাচ্ছে। আপনি কি কোনো নির্দিষ্ট কারিগর খুঁজছেন, নাকি নতুন কোনো কাজ পোস্ট করতে চান?${recsText}\n\nআমাকে নির্দ্বিধায় প্রশ্ন করতে পারেন!`;
+    } else {
+      replyText = `Thank you for reaching out! ServiNear is your verified community network for reliable local help.${recsText}\n\nFeel free to ask about hiring, pricing, or posting a new task!`;
+    }
+    suggestedActions.push({ label: isBangla ? "+ কাজ পোস্ট করুন" : "+ Post Task", action: "open_post" });
+    suggestedActions.push({ label: isBangla ? "ক্যাটাগরি সমূহ" : "All Categories", action: "browse" });
+  }
+
+  return {
+    ok: true,
+    reply: replyText,
+    language: isBangla ? "bn" : "en",
+    suggested_actions: suggestedActions,
+    matches: vectorMatches.slice(0, 2)
+  };
+}
+
 function requireUser(user,roles=[]) { if(!user)fail(401,"Sign in to continue."); if(roles.length&&!roles.includes(user.role))fail(403,"This action is not available for your account."); }
 function readBody(req) {
   return new Promise((resolve,reject)=>{
@@ -699,15 +804,42 @@ async function handleApi(req,res,url) {
   }
   const acceptMatch=url.pathname.match(/^\/api\/offers\/(\d+)\/accept$/);
   if(req.method==="POST"&&acceptMatch) {
-    requireUser(user,["customer"]);const offerId=Number(acceptMatch[1]);const offer=db.prepare(`SELECT o.id,o.job_id FROM offers o JOIN jobs j ON j.id=o.job_id
+    requireUser(user,["customer"]);
+    const offerId=Number(acceptMatch[1]);
+    const offer=db.prepare(`SELECT o.id,o.job_id,o.worker_id,o.price FROM offers o JOIN jobs j ON j.id=o.job_id
       WHERE o.id=? AND j.customer_id=? AND j.status='open' AND o.status='pending'`).get(offerId,user.id);
     if(!offer)fail(404,"That bid is no longer available.");
-    const workerRec = db.prepare("SELECT worker_id FROM offers WHERE id=?").get(offerId);
+
+    const releaseOtp = Math.floor(100000 + Math.random() * 900000).toString();
+
     db.exec("BEGIN IMMEDIATE");
-    try {db.prepare("UPDATE offers SET status=CASE WHEN id=? THEN 'accepted' ELSE 'declined' END WHERE job_id=?").run(offerId,offer.job_id);db.prepare("UPDATE jobs SET status='accepted' WHERE id=?").run(offer.job_id);db.exec("COMMIT");}
-    catch(error){db.exec("ROLLBACK");throw error;}
-    if(workerRec) notifyUser(workerRec.worker_id, "Offer Accepted!", "Your offer was accepted! The customer contact phone and exact address are now unlocked.", "accepted", "/jobs");
-    return send(res,200,{ok:true});
+    try {
+      db.prepare("UPDATE offers SET status=CASE WHEN id=? THEN 'accepted' ELSE 'declined' END WHERE job_id=?").run(offerId,offer.job_id);
+      db.prepare("UPDATE jobs SET status='accepted' WHERE id=?").run(offer.job_id);
+
+      ensureWallet(user.id);
+      ensureWallet(offer.worker_id);
+
+      db.prepare(`INSERT INTO escrows(job_id, offer_id, customer_id, worker_id, amount, release_otp, status)
+        VALUES(?,?,?,?,?,?,'held')
+        ON CONFLICT(job_id) DO UPDATE SET
+          offer_id=excluded.offer_id, worker_id=excluded.worker_id, amount=excluded.amount, release_otp=excluded.release_otp, status='held'`)
+        .run(offer.job_id, offer.id, user.id, offer.worker_id, offer.price, releaseOtp);
+
+      db.prepare("UPDATE wallets SET locked_escrow=locked_escrow+? WHERE user_id=?").run(offer.price, user.id);
+      db.prepare("INSERT INTO transactions(user_id, type, amount, payment_method, details) VALUES(?,?,?,'bKash Escrow',?)")
+        .run(user.id, "escrow_hold", offer.price, `Escrow locked for Task #${offer.job_id}`);
+
+      db.exec("COMMIT");
+    } catch(error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+
+    notifyUser(offer.worker_id, "Offer Accepted & Escrow Locked!", `Client secured ৳${offer.price} in ServiNear Escrow. Customer contact and address unlocked!`, "accepted", "/jobs");
+    notifyUser(user.id, "Escrow Secured & Release OTP", `৳${offer.price} held safely in Escrow. Your 6-digit release OTP is: ${releaseOtp}. Provide to worker only after job completion.`, "escrow", "/jobs");
+
+    return send(res,200,{ok:true,escrow:{amount:offer.price,release_otp:releaseOtp,status:"held"}});
   }
   const completeMatch=url.pathname.match(/^\/api\/jobs\/(\d+)\/complete$/);
   if(req.method==="POST"&&completeMatch) {
@@ -863,6 +995,7 @@ async function handleApi(req,res,url) {
     const result=db.prepare("INSERT INTO messages(sender_id, recipient_id, job_id, content) VALUES(?,?,?,?)").run(user.id, recipientId, jobId, content);
     const msgId=Number(result.lastInsertRowid);
     notifyUser(recipientId, `New message from ${user.name}`, content.slice(0, 100), "chat", "/inbox");
+    sendToUser(recipientId, { type: "chat_message", message: { id: msgId, sender_id: user.id, recipient_id: recipientId, job_id: jobId, content, created_at: new Date().toISOString() } });
     return send(res,201,{ok:true,id:msgId,message:{id:msgId,sender_id:user.id,recipient_id:recipientId,job_id:jobId,content}});
   }
 
@@ -935,6 +1068,91 @@ async function handleApi(req,res,url) {
   }
 
   // --- User Settings & Profile Customization Endpoints ---
+  
+  // --- AI Customer Care Chatbot Endpoint ---
+  if(req.method==="POST"&&url.pathname==="/api/ai/chat") {
+    const body=await readBody(req);
+    const message=String(body.message||"").trim();
+    if(!message) fail(400,"Message required.");
+    const vectorMatches = vectorSearch(message, "all", 3);
+    const result = generateAIResponse(message, vectorMatches, user);
+    return send(res,200,result);
+  }
+
+  // --- Escrow Completion & OTP Release Endpoint ---
+  const releaseMatch = url.pathname.match(/^\/api\/jobs\/(\d+)\/release-escrow$/);
+  if(req.method==="POST"&&releaseMatch) {
+    requireUser(user);
+    const jobId = Number(releaseMatch[1]);
+    const body = await readBody(req);
+    const otp = String(body.otp||"").trim();
+    const escrow = db.prepare("SELECT * FROM escrows WHERE job_id=? AND status='held'").get(jobId);
+    if(!escrow) fail(404,"Active escrow record not found for this task.");
+
+    if(escrow.release_otp !== otp) {
+      fail(400,"Invalid 6-digit release OTP. Please ask the client for the correct completion OTP.");
+    }
+
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.prepare("UPDATE escrows SET status='released', released_at=CURRENT_TIMESTAMP WHERE id=?").run(escrow.id);
+      db.prepare("UPDATE jobs SET status='completed' WHERE id=?").run(jobId);
+      db.prepare("UPDATE wallets SET locked_escrow=MAX(0, locked_escrow-?) WHERE user_id=?").run(escrow.amount, escrow.customer_id);
+      db.prepare("UPDATE wallets SET balance=balance+? WHERE user_id=?").run(escrow.amount, escrow.worker_id);
+
+      db.prepare("INSERT INTO transactions(user_id, type, amount, payment_method, details) VALUES(?,?,?,'Escrow Release',?)")
+        .run(escrow.worker_id, "escrow_release", escrow.amount, `Earnings credited from Task #${jobId}`);
+      db.exec("COMMIT");
+    } catch(err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+
+    notifyUser(escrow.worker_id, "Earnings Released!", `৳${escrow.amount} has been added to your ServiNear balance.`, "wallet", "/profile");
+    notifyUser(escrow.customer_id, "Task Completed & Escrow Settled", `Task #${jobId} completed. ৳${escrow.amount} released to technician.`, "completed", "/jobs");
+
+    return send(res,200,{ok:true,amount:escrow.amount,status:"released"});
+  }
+
+  // --- Wallet & Transactions Endpoints ---
+  if(req.method==="GET"&&url.pathname==="/api/wallet") {
+    requireUser(user);
+    ensureWallet(user.id);
+    const wallet = db.prepare("SELECT balance, locked_escrow FROM wallets WHERE user_id=?").get(user.id);
+    const history = db.prepare("SELECT id, type, amount, payment_method, trx_id, details, created_at FROM transactions WHERE user_id=? ORDER BY created_at DESC LIMIT 20").all(user.id);
+    const activeEscrows = db.prepare(`SELECT e.*, j.title as job_title FROM escrows e JOIN jobs j ON j.id=e.job_id
+      WHERE (e.customer_id=? OR e.worker_id=?) AND e.status='held'`).all(user.id, user.id);
+    return send(res,200,{ok:true,wallet,history,escrows:activeEscrows});
+  }
+
+  if(req.method==="POST"&&url.pathname==="/api/wallet/withdraw") {
+    requireUser(user,["worker"]);
+    const body = await readBody(req);
+    const amount = Number(body.amount);
+    const method = String(body.method||"bKash").trim();
+    const phone = validateText(body.phone,"MFS Phone Number",11,15);
+    if(!Number.isInteger(amount)||amount<100) fail(400,"Minimum payout withdrawal is ৳100.");
+
+    ensureWallet(user.id);
+    const wallet = db.prepare("SELECT balance FROM wallets WHERE user_id=?").get(user.id);
+    if(!wallet||wallet.balance < amount) fail(400,"Insufficient wallet balance.");
+
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.prepare("UPDATE wallets SET balance=balance-? WHERE user_id=?").run(amount, user.id);
+      const trxId = "WTH-" + Date.now().toString(36).toUpperCase();
+      db.prepare("INSERT INTO transactions(user_id, type, amount, payment_method, trx_id, details) VALUES(?,?,?,?,?,?)")
+        .run(user.id, "withdrawal", amount, method, trxId, `Payout request to ${method} (${phone})`);
+      db.exec("COMMIT");
+    } catch(err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+
+    notifyUser(user.id, "Withdrawal Processing", `Your payout of ৳${amount} to ${method} (${phone}) is being processed.`, "wallet", "/profile");
+    return send(res,200,{ok:true,amount,method,phone});
+  }
+
   if(req.method==="GET"&&url.pathname==="/api/user/settings") {
     requireUser(user);
     const u=db.prepare("SELECT * FROM users WHERE id=?").get(user.id);
@@ -1050,3 +1268,57 @@ const server=http.createServer(async(req,res)=>{
 });
 
 server.listen(PORT,()=>console.log(`ServiNear is ready at http://localhost:${PORT}`));
+
+
+// ============================================================================
+// NATIVE WEBSOCKET ENGINE (INSTANT CHAT, TYPING STATUS, LIVE NOTIFICATIONS)
+// ============================================================================
+const wss = new WebSocketServer({ server });
+const connectedClients = new Map();
+
+wss.on("connection", (ws, req) => {
+  const cookies = parseCookies(req.headers.cookie);
+  const token = cookies.servinear_session;
+  const session = token ? sessions.get(token) : null;
+  const user = session ? currentUser(session.user.id) : null;
+
+  if (user) {
+    ws.userId = user.id;
+    if (!connectedClients.has(user.id)) connectedClients.set(user.id, new Set());
+    connectedClients.get(user.id).add(ws);
+    try { ws.send(JSON.stringify({ type: "auth_success", user_id: user.id, user_name: user.name })); } catch {}
+  }
+
+  ws.on("message", (raw) => {
+    try {
+      const data = JSON.parse(raw);
+      if (data.type === "typing" && ws.userId && data.peer_id) {
+        sendToUser(Number(data.peer_id), {
+          type: "typing",
+          sender_id: ws.userId,
+          is_typing: Boolean(data.is_typing),
+          job_id: data.job_id
+        });
+      }
+    } catch {}
+  });
+
+  ws.on("close", () => {
+    if (ws.userId && connectedClients.has(ws.userId)) {
+      connectedClients.get(ws.userId).delete(ws);
+      if (connectedClients.get(ws.userId).size === 0) connectedClients.delete(ws.userId);
+    }
+  });
+});
+
+function sendToUser(userId, payload) {
+  const sockets = connectedClients.get(userId);
+  if (sockets) {
+    const msg = JSON.stringify(payload);
+    for (const ws of sockets) {
+      if (ws.readyState === 1) {
+        try { ws.send(msg); } catch {}
+      }
+    }
+  }
+}

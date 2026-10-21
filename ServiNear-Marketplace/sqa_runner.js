@@ -387,6 +387,54 @@ async function runAllSQATests() {
   await runTest('API: GET /api/chat/messages retrieves conversation thread', async () => {
     const workerRow = db.prepare("SELECT id FROM users WHERE email='tanvir.electrician@gmail.com'").get();
     const res = await apiRequest('GET', `/api/chat/messages?peer_id=${workerRow.id}&job_id=${testJobId}`, null, { Cookie: customerCookie });
+
+  // Test 3.16: AI Customer Care Chatbot API
+  await runTest('API: POST /api/ai/chat returns contextual Bengali advice and action buttons', async () => {
+    const res = await apiRequest('POST', '/api/ai/chat', { message: 'কীভাবে NID ভেরিফিকেশন করব?' });
+    assert.strictEqual(res.statusCode, 200);
+    assert(res.data.ok === true);
+    assert(res.data.reply && res.data.reply.includes('NID'));
+    assert(Array.isArray(res.data.suggested_actions) && res.data.suggested_actions.length > 0);
+  });
+
+  await runTest('API: POST /api/ai/chat returns English Escrow safety guidelines', async () => {
+    const res = await apiRequest('POST', '/api/ai/chat', { message: 'How does escrow protection work?' });
+    assert.strictEqual(res.statusCode, 200);
+    assert(res.data.ok === true);
+    assert(res.data.reply && res.data.reply.toLowerCase().includes('escrow'));
+  });
+
+  // Test 3.17: Escrow Hold Creation upon Offer Acceptance
+  let releaseOtpCode = null;
+  await runTest('API: POST /api/offers/:id/accept locks funds in Escrow and returns release OTP', async () => {
+    const res = await apiRequest('POST', `/api/offers/${offerId}/accept`, {}, { Cookie: customerCookie });
+    assert.strictEqual(res.statusCode, 200);
+    assert(res.data.ok === true);
+    assert(res.data.escrow && res.data.escrow.release_otp);
+    assert.strictEqual(res.data.escrow.amount, 1400);
+    releaseOtpCode = res.data.escrow.release_otp;
+    assert.strictEqual(releaseOtpCode.length, 6);
+  });
+
+  // Test 3.18: Wallet & Transaction Inspection
+  await runTest('API: GET /api/wallet retrieves user wallet balance and locked escrow', async () => {
+    const res = await apiRequest('GET', '/api/wallet', null, { Cookie: customerCookie });
+    assert.strictEqual(res.statusCode, 200);
+    assert(res.data.wallet);
+    assert(res.data.wallet.locked_escrow >= 1400);
+    assert(Array.isArray(res.data.history));
+  });
+
+  // Test 3.19: Completion OTP Verification & Escrow Release
+  await runTest('API: POST /api/jobs/:id/release-escrow with valid 6-digit OTP releases funds to worker', async () => {
+    const res = await apiRequest('POST', `/api/jobs/${testJobId}/release-escrow`, {
+      otp: releaseOtpCode
+    }, { Cookie: workerCookie });
+    assert.strictEqual(res.statusCode, 200);
+    assert.strictEqual(res.data.status, 'released');
+    assert.strictEqual(res.data.amount, 1400);
+  });
+
     assert.strictEqual(res.statusCode, 200);
     assert(Array.isArray(res.data.messages) && res.data.messages.length > 0);
   });
@@ -448,9 +496,25 @@ async function runAllSQATests() {
     assert(html.includes('All Categories'), 'index.html must contain All Categories');
   });
 
+  // Test 4.5: Native WebSocket Real-Time Handshake
+  await runTest('Non-Functional: Native WebSocket connects and handshakes successfully', async () => {
+    const { WebSocket } = require('ws');
+    await new Promise((resolve, reject) => {
+      const ws = new WebSocket('ws://127.0.0.1:5000');
+      ws.on('open', () => {
+        ws.close();
+        resolve();
+      });
+      ws.on('error', reject);
+    });
+  });
+
+
   // Clean up test records
   try {
     if (testJobId) {
+      db.prepare("DELETE FROM escrows WHERE job_id=?").run(testJobId);
+      db.prepare("DELETE FROM transactions WHERE details LIKE '%Task #' || ? || '%' OR details LIKE '%Job #' || ? || '%'").run(testJobId, testJobId);
       db.prepare("DELETE FROM offers WHERE job_id=?").run(testJobId);
       db.prepare("DELETE FROM saved_posts WHERE target_type='job' AND target_id=?").run(testJobId);
       db.prepare("DELETE FROM messages WHERE job_id=?").run(testJobId);
