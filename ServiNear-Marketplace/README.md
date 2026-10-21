@@ -56,14 +56,12 @@ All fixed and generated demo accounts use password `ServiNear123!`.
 
 | Role | Email |
 | --- | --- |
-| Customer | `customer@servinear.local` |
-| Second customer | `customer2@servinear.local` |
-| Verified provider | `worker@servinear.local` |
+| Customer | `nusrat.jahan@gmail.com` |
+| Second customer | `tariqul.islam@gmail.com` |
+| Verified provider | `tanvir.electrician@gmail.com` |
 | Administrator | `admin@servinear.local` |
-| Generated customer | `customer-0003@demo.servinear.local` through `customer-0500@demo.servinear.local` |
-| Generated provider | `provider-0006@demo.servinear.local` through `provider-1000@demo.servinear.local` |
 
-The generated account ranges plus fixed demo accounts make 500 customer-role accounts and 1,000 provider-role accounts total. Use the dialog's demo buttons for the fixed customer, provider, and admin accounts. Synthetic phone numbers are labels such as `DEMO-PHONE-P0001`; they cannot call a real person.
+Use the dialog's demo buttons for the customer, provider, and admin accounts. These accounts and all contact values are synthetic demo data.
 
 ## Try the main workflow
 

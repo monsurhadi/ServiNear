@@ -1315,7 +1315,7 @@ async function toggleBookmark(itemType, itemId, btnNode) {
     return;
   }
   try {
-    const res = await post("/api/saved-posts/toggle", { item_type: itemType, item_id: Number(itemId) });
+    const res = await post("/api/saved-posts/toggle", { target_type: itemType, target_id: Number(itemId) });
     const isSaved = res.status === "saved";
     if (btnNode) {
       btnNode.classList.toggle("saved", isSaved);
@@ -1947,8 +1947,8 @@ function bindEvents() {
     const demo = event.target.closest("[data-demo]");
     if (demo) {
       const account = {
-        customer: "customer@servinear.local",
-        worker: "worker@servinear.local",
+        customer: "nusrat.jahan@gmail.com",
+        worker: "tanvir.electrician@gmail.com",
         admin: "admin@servinear.local"
       }[demo.dataset.demo];
       $("#login-form [name=email]").value = account;
