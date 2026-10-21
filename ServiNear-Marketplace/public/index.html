@@ -381,6 +381,7 @@
               <li><button class="profile-nav-item" data-profile-section="tasks" type="button"><i data-lucide="package" class="icon-orange"></i> <span data-i18n="navMyOrders">My Orders &amp; Work</span></button></li>
               <li><a href="/saved" data-route class="profile-nav-item"><i data-lucide="bookmark" class="icon-green"></i> <span data-i18n="navSavedPosts">Saved Posts</span></a></li>
               <li><button class="profile-nav-item" id="sidebar-verify-btn" type="button"><i data-lucide="shield-check" class="icon-teal"></i> <span data-i18n="navGetVerified">Get Verified (NID)</span></button></li>
+              <li><button class="profile-nav-item" id="sidebar-settings-btn" type="button"><i data-lucide="settings" class="icon-teal"></i> <span data-i18n="navSettings">Settings</span></button></li>
               <li><a href="/help" data-route class="profile-nav-item"><i data-lucide="life-buoy" class="icon-blue"></i> <span data-i18n="navSupportTeam">Support Team</span></a></li>
             </ul>
           </div>
@@ -960,6 +961,33 @@
       <p class="inline-message" id="offer-message" role="status"></p>
     </form>
   </dialog>
+
+  <!-- Hidden Profile Photo Input for Settings Tab -->
+  <input type="file" id="profile-photo-file-input" accept="image/*" class="hidden">
+
+  <!-- Mobile Bottom Navigation Bar (Fluid PC & Mobile UX Ratio) -->
+  <nav class="mobile-nav-bar" id="mobile-nav-bar">
+    <a href="/" data-route class="mobile-nav-item active" id="mob-nav-home">
+      <i data-lucide="compass"></i>
+      <span data-i18n="mobExplore">Explore</span>
+    </a>
+    <a href="/jobs" data-route class="mobile-nav-item" id="mob-nav-jobs">
+      <i data-lucide="clipboard-list"></i>
+      <span data-i18n="mobTasks">Tasks</span>
+    </a>
+    <button class="mobile-nav-item mobile-post-btn" data-open-job type="button" aria-label="Post a Task">
+      <i data-lucide="plus"></i>
+    </button>
+    <a href="/inbox" data-route class="mobile-nav-item relative" id="mob-nav-inbox">
+      <i data-lucide="message-square"></i>
+      <span class="mobile-nav-badge hidden" id="mobile-chat-badge">0</span>
+      <span data-i18n="mobInbox">Inbox</span>
+    </a>
+    <a href="/profile" data-route class="mobile-nav-item" id="mob-nav-profile">
+      <i data-lucide="user"></i>
+      <span data-i18n="mobProfile">Profile</span>
+    </a>
+  </nav>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 

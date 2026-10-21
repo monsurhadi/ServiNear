@@ -166,6 +166,177 @@ ensureColumn("users", "occupation", "TEXT");
 ensureColumn("users", "google_id", "TEXT");
 ensureColumn("users", "reset_token", "TEXT");
 ensureColumn("users", "reset_expires", "INTEGER");
+ensureColumn("users", "username", "TEXT");
+ensureColumn("users", "avatar_photo", "TEXT");
+ensureColumn("users", "profession_icon", "TEXT DEFAULT 'student'");
+ensureColumn("users", "skills", "TEXT DEFAULT '[]'");
+ensureColumn("users", "notif_reactions", "INTEGER DEFAULT 1");
+ensureColumn("users", "notif_comments", "INTEGER DEFAULT 1");
+ensureColumn("users", "notif_messages", "INTEGER DEFAULT 1");
+ensureColumn("users", "notif_all", "INTEGER DEFAULT 1");
+ensureColumn("users", "notif_updates", "INTEGER DEFAULT 1");
+ensureColumn("users", "notif_hire", "INTEGER DEFAULT 0");
+ensureColumn("users", "language", "TEXT DEFAULT 'bn'");
+
+// ============================================================================
+// VECTOR DATABASE CORE (128-DIMENSIONAL EMBEDDINGS & COSINE SIMILARITY ENGINE)
+// ============================================================================
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS vector_index (
+    id INTEGER PRIMARY KEY,
+    entity_type TEXT NOT NULL,
+    entity_id INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL,
+    area TEXT,
+    content TEXT NOT NULL,
+    vector TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(entity_type, entity_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_vec_type ON vector_index(entity_type);
+`);
+
+const VECTOR_DIM = 128;
+
+const SEMANTIC_CLUSTERS = [
+  { dim: 0, terms: ["plumbing", "pipe", "leak", "faucet", "tap", "drain", "water", "basin", "commode", "প্লাম্বিং", "পাইপ", "লিক", "কল", "পানি", "ড্রেন"] },
+  { dim: 6, terms: ["electrical", "electrician", "wiring", "wire", "switch", "circuit", "short", "voltage", "fan", "light", "ইলেক্ট্রিক", "ইলেক্ট্রিশিয়ান", "তার", "সুইচ", "ফ্যান", "বাতি", "বিদ্যুৎ"] },
+  { dim: 12, terms: ["cleaning", "maid", "deep clean", "mop", "sweep", "sofa", "carpet", "wash", "ক্লিনিং", "পরিষ্কার", "মোছা", "ঝাড়ু", "ধোয়া", "সোফা"] },
+  { dim: 18, terms: ["appliances", "fridge", "refrigerator", "microwave", "oven", "washing machine", "ফ্রিজ", "মাইক্রোওয়েভ", "ওভেন", "ওয়াশিং মেশিন"] },
+  { dim: 24, terms: ["ac", "air condition", "cooling", "compressor", "gas refill", "hvac", "এসি", "শীতাতপ", "গ্যাস", "কুলিং"] },
+  { dim: 30, terms: ["painting", "paint", "painter", "wall", "color", "roller", "distemper", "রং", "পেইন্টার", "দেয়াল", "কালার"] },
+  { dim: 36, terms: ["carpentry", "carpenter", "wood", "furniture", "door", "table", "chair", "cabinet", "কাঠ", "ফার্নিচার", "ছুতোর", "দরজা", "টেবিল"] },
+  { dim: 42, terms: ["handyman", "repair", "fix", "install", "mount", "drilling", "মেকানিক", "মেরামত", "ফিটিং", "ড্রিল"] },
+  { dim: 48, terms: ["delivery", "courier", "rider", "pickup", "parcel", "ডেলিভারি", "কুরিয়ার", "রাইডার", "পার্সেল"] },
+  { dim: 54, terms: ["driver", "car", "auto", "vehicle", "ride", "ড্রাইভার", "গাড়ি", "অটো", "চালক"] },
+  { dim: 60, terms: ["it", "computer", "laptop", "software", "windows", "network", "wifi", "router", "আইটি", "কম্পিউটার", "ল্যাপটপ", "ওয়াইফাই"] },
+  { dim: 66, terms: ["beauty", "salon", "makeup", "haircut", "facial", "মেকআপ", "চুল", "সেলুন", "বিউটি"] },
+  { dim: 72, terms: ["tutor", "teacher", "math", "english", "study", "education", "শিক্ষক", "টিউশন", "পড়াশোনা"] },
+  { dim: 78, terms: ["cooking", "chef", "cook", "food", "catering", "রান্না", "শেফ", "খাবার"] },
+  { dim: 84, terms: ["cctv", "security", "camera", "lock", "ক্যামেরা", "সিসিটিভি", "নিরাপত্তা"] },
+  { dim: 90, terms: ["construction", "mason", "brick", "cement", "রাজমিস্ত্রি", "ইট", "সিমেন্ট", "নির্মাণ"] }
+];
+
+function generateEmbedding(text) {
+  const vec = new Float32Array(VECTOR_DIM);
+  if (!text) return vec;
+  const clean = String(text).toLowerCase();
+  const tokens = clean.split(/[\s,.;:!?/()\-+]+/).filter((t) => t.length > 1);
+
+  // 1. Semantic Clusters
+  for (const cluster of SEMANTIC_CLUSTERS) {
+    for (const term of cluster.terms) {
+      if (clean.includes(term)) {
+        vec[cluster.dim] += 3.0;
+        vec[cluster.dim + 1] += 2.0;
+        vec[cluster.dim + 2] += 1.5;
+      }
+    }
+  }
+
+  // 2. Token & Trigram Feature Hashing
+  for (const token of tokens) {
+    let hash = 2166136261;
+    for (let i = 0; i < token.length; i++) {
+      hash ^= token.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    const idx = 96 + (Math.abs(hash) % 32);
+    vec[idx] += 1.2;
+
+    for (let i = 0; i <= token.length - 3; i++) {
+      const tri = token.slice(i, i + 3);
+      let triHash = 5381;
+      for (let j = 0; j < tri.length; j++) {
+        triHash = ((triHash << 5) + triHash) + tri.charCodeAt(j);
+      }
+      vec[Math.abs(triHash) % VECTOR_DIM] += 0.4;
+    }
+  }
+
+  // 3. L2 Normalization (||vec|| = 1.0)
+  let norm = 0;
+  for (let i = 0; i < VECTOR_DIM; i++) norm += vec[i] * vec[i];
+  norm = Math.sqrt(norm);
+  if (norm > 0) {
+    for (let i = 0; i < VECTOR_DIM; i++) vec[i] /= norm;
+  }
+  return vec;
+}
+
+function cosineSimilarity(vecA, vecB) {
+  let dot = 0;
+  for (let i = 0; i < VECTOR_DIM; i++) dot += vecA[i] * vecB[i];
+  return dot;
+}
+
+const upsertVectorStmt = db.prepare(`
+  INSERT INTO vector_index(entity_type, entity_id, title, category, area, content, vector, updated_at)
+  VALUES(?,?,?,?,?,?,?, CURRENT_TIMESTAMP)
+  ON CONFLICT(entity_type, entity_id) DO UPDATE SET
+    title=excluded.title,
+    category=excluded.category,
+    area=excluded.area,
+    content=excluded.content,
+    vector=excluded.vector,
+    updated_at=CURRENT_TIMESTAMP
+`);
+
+function indexWorker(worker) {
+  if (!worker) return;
+  const content = `${worker.name} ${worker.category || ""} ${worker.area || ""} ${worker.bio || ""} ${worker.occupation || ""} ${worker.skills || ""}`;
+  const vec = generateEmbedding(content);
+  upsertVectorStmt.run("worker", worker.id, worker.name, worker.category || "General", worker.area || "", content, JSON.stringify(Array.from(vec)));
+}
+
+function indexJob(job) {
+  if (!job) return;
+  const content = `${job.title} ${job.category || ""} ${job.area || ""} ${job.details || ""}`;
+  const vec = generateEmbedding(content);
+  upsertVectorStmt.run("job", job.id, job.title, job.category || "General", job.area || "", content, JSON.stringify(Array.from(vec)));
+}
+
+function initVectorDatabase() {
+  const existingCount = db.prepare("SELECT COUNT(*) AS c FROM vector_index").get().c;
+  if (existingCount > 0) return;
+  const workers = db.prepare("SELECT * FROM users WHERE role='worker'").all();
+  workers.forEach(indexWorker);
+  const jobs = db.prepare("SELECT * FROM jobs").all();
+  jobs.forEach(indexJob);
+}
+
+function vectorSearch(query, entityType = "all", limit = 20) {
+  const queryVec = generateEmbedding(query);
+  let sql = "SELECT * FROM vector_index";
+  if (entityType === "workers" || entityType === "worker") sql += " WHERE entity_type='worker'";
+  else if (entityType === "jobs" || entityType === "job") sql += " WHERE entity_type='job'";
+  const rows = db.prepare(sql).all();
+
+  const scored = [];
+  for (const row of rows) {
+    try {
+      const vec = JSON.parse(row.vector);
+      const score = cosineSimilarity(queryVec, vec);
+      if (score > 0.05) {
+        scored.push({
+          entity_type: row.entity_type,
+          entity_id: row.entity_id,
+          title: row.title,
+          category: row.category,
+          area: row.area,
+          content: row.content,
+          score: Math.round(score * 100) / 100,
+          match_pct: Math.min(100, Math.round(score * 120)) + "%"
+        });
+      }
+    } catch {}
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit);
+}
 
 function passwordHash(password, salt = crypto.randomBytes(16).toString("hex")) {
   return `${salt}:${crypto.scryptSync(password, salt, 64).toString("hex")}`;
@@ -296,6 +467,7 @@ function seedDatabase() {
   legacyOffers.forEach((offer) => updateSeedOffer.run(`I can provide a clear ${offer.category.toLowerCase()} quote and confirm the visit time. Offer ref SN-O-${pad(offer.id)}.`,offer.id));
 }
 seedDatabase();
+initVectorDatabase();
 
 function send(res,status,payload,headers={}) {
   const body=Buffer.from(JSON.stringify(payload));
@@ -307,7 +479,13 @@ function parseCookies(header="") {
   return Object.fromEntries(header.split(";").map((part)=>{const i=part.indexOf("=");return i<0?["",""]:[part.slice(0,i).trim(),decodeURIComponent(part.slice(i+1).trim())];}));
 }
 function currentUser(id) {
-  return db.prepare("SELECT id,name,first_name,surname,email,role,gender,city,occupation,phone,area,address,category,bio,rate,experience,latitude,longitude,verified,availability FROM users WHERE id=?").get(id)||null;
+  const u = db.prepare("SELECT * FROM users WHERE id=?").get(id);
+  if (!u) return null;
+  delete u.password_hash;
+  delete u.reset_token;
+  delete u.reset_expires;
+  try { u.skills = JSON.parse(u.skills || "[]"); } catch { u.skills = []; }
+  return u;
 }
 function notifyUser(userId, title, message, type = "system", link = null) {
   try {
@@ -343,9 +521,13 @@ function coordinates(body) {
   return {lat,lng};
 }
 function publicWorkers() {
-  return db.prepare(`SELECT u.id,u.name,u.area,u.category,u.bio,u.rate,u.experience,u.latitude,u.longitude,u.verified,u.availability,
+  const workers = db.prepare(`SELECT u.id,u.name,u.username,u.avatar_photo,u.profession_icon,u.skills,u.area,u.city,u.category,u.bio,u.rate,u.experience,u.latitude,u.longitude,u.verified,u.availability,
     ROUND(AVG(r.rating),1) AS rating,COUNT(r.id) AS reviews FROM users u LEFT JOIN reviews r ON r.worker_id=u.id
     WHERE u.role='worker' GROUP BY u.id ORDER BY u.verified DESC,u.name`).all();
+  return workers.map((w) => {
+    try { w.skills = JSON.parse(w.skills || "[]"); } catch { w.skills = []; }
+    return w;
+  });
 }
 function publicJobs(user) {
   const userId=user?.id||-1;
@@ -499,7 +681,9 @@ async function handleApi(req,res,url) {
     const phone=validateText(body.contact_phone||user.phone,"Contact phone",5,30);const address=validateText(body.exact_address||user.address,"Exact address",5,220);const point=coordinates(body);
     const result=db.prepare(`INSERT INTO jobs(customer_id,title,category,details,area,budget,contact_phone,exact_address,latitude,longitude)
       VALUES(?,?,?,?,?,?,?,?,?,?)`).run(user.id,title,category,details,area,budget,phone,address,point.lat,point.lng);
-    return send(res,201,{id:Number(result.lastInsertRowid)});
+    const newJobId = Number(result.lastInsertRowid);
+    indexJob({ id: newJobId, title, category, details, area });
+    return send(res,201,{id:newJobId});
   }
   const offerMatch=url.pathname.match(/^\/api\/jobs\/(\d+)\/offers$/);
   if(req.method==="POST"&&offerMatch) {
@@ -703,6 +887,99 @@ async function handleApi(req,res,url) {
     requireUser(user);
     db.prepare("UPDATE notifications SET read=1 WHERE user_id=?").run(user.id);
     return send(res,200,{ok:true});
+  }
+
+  // --- Vector Database Search & Stats Endpoints ---
+  if(req.method==="GET"&&url.pathname==="/api/vector/search") {
+    const q=url.searchParams.get("q")||"";
+    const type=url.searchParams.get("type")||"all";
+    const limit=Math.min(100,Math.max(1,Number(url.searchParams.get("limit")||20)));
+    const start=Date.now();
+    const results=vectorSearch(q,type,limit);
+    return send(res,200,{query:q,total:results.length,took_ms:Date.now()-start,dimensions:VECTOR_DIM,engine:"ServiNear Neural Vector Core (Cosine 128-dim)",results});
+  }
+  if(req.method==="GET"&&url.pathname==="/api/vector/stats") {
+    const count=db.prepare("SELECT COUNT(*) as total FROM vector_index").get().total;
+    const workers=db.prepare("SELECT COUNT(*) as c FROM vector_index WHERE entity_type='worker'").get().c;
+    const jobs=db.prepare("SELECT COUNT(*) as c FROM vector_index WHERE entity_type='job'").get().c;
+    return send(res,200,{total_vectors:count,workers_indexed:workers,jobs_indexed:jobs,dimensions:VECTOR_DIM,metric:"Cosine Similarity",status:"operational"});
+  }
+
+  // --- User Settings & Profile Customization Endpoints ---
+  if(req.method==="GET"&&url.pathname==="/api/user/settings") {
+    requireUser(user);
+    const u=db.prepare("SELECT * FROM users WHERE id=?").get(user.id);
+    delete u.password_hash;
+    delete u.reset_token;
+    delete u.reset_expires;
+    try { u.skills=JSON.parse(u.skills||"[]"); } catch { u.skills=[]; }
+    return send(res,200,{
+      settings: {
+        id: u.id,
+        email: u.email,
+        display_name: u.name,
+        username: u.username||`@${u.email.split("@")[0]}`,
+        bio: u.bio||"",
+        city: u.city||u.area||"Dhaka",
+        phone: u.phone||"",
+        occupation: u.occupation||(u.role==="worker"?u.category:"Student"),
+        profession_icon: u.profession_icon||"student",
+        skills: u.skills,
+        avatar_photo: u.avatar_photo||null,
+        language: u.language||"bn",
+        notif_reactions: Boolean(u.notif_reactions??1),
+        notif_comments: Boolean(u.notif_comments??1),
+        notif_messages: Boolean(u.notif_messages??1),
+        notif_all: Boolean(u.notif_all??1),
+        notif_updates: Boolean(u.notif_updates??1),
+        notif_hire: Boolean(u.notif_hire??0),
+        verified: Boolean(u.verified)
+      }
+    });
+  }
+
+  if(req.method==="PATCH"&&url.pathname==="/api/user/settings") {
+    requireUser(user);
+    const body=await readBody(req);
+    const name=body.display_name!==undefined?String(body.display_name).trim():user.name;
+    const username=body.username!==undefined?String(body.username).trim():user.username;
+    const bio=body.bio!==undefined?String(body.bio).slice(0,300):user.bio;
+    const city=body.city!==undefined?String(body.city).trim():user.city;
+    const phone=body.phone!==undefined?String(body.phone).trim():user.phone;
+    const occupation=body.occupation!==undefined?String(body.occupation).trim():user.occupation;
+    const profession_icon=body.profession_icon!==undefined?String(body.profession_icon).trim():user.profession_icon;
+    const skills=Array.isArray(body.skills)?JSON.stringify(body.skills):(user.skills ? JSON.stringify(user.skills) : "[]");
+    const notif_reactions=body.notif_reactions!==undefined?(body.notif_reactions?1:0):user.notif_reactions;
+    const notif_comments=body.notif_comments!==undefined?(body.notif_comments?1:0):user.notif_comments;
+    const notif_messages=body.notif_messages!==undefined?(body.notif_messages?1:0):user.notif_messages;
+    const notif_all=body.notif_all!==undefined?(body.notif_all?1:0):user.notif_all;
+    const notif_updates=body.notif_updates!==undefined?(body.notif_updates?1:0):user.notif_updates;
+    const notif_hire=body.notif_hire!==undefined?(body.notif_hire?1:0):user.notif_hire;
+    const language=body.language!==undefined?String(body.language).trim():user.language;
+
+    db.prepare(`UPDATE users SET
+      name=?,username=?,bio=?,city=?,phone=?,occupation=?,profession_icon=?,skills=?,
+      notif_reactions=?,notif_comments=?,notif_messages=?,notif_all=?,notif_updates=?,notif_hire=?,language=?
+      WHERE id=?`).run(
+      name,username,bio,city,phone,occupation,profession_icon,skills,
+      notif_reactions,notif_comments,notif_messages,notif_all,notif_updates,notif_hire,language,
+      user.id
+    );
+
+    const updated=currentUser(user.id);
+    if(updated&&updated.role==="worker") indexWorker(updated);
+    return send(res,200,{ok:true,user:updated});
+  }
+
+  if(req.method==="POST"&&url.pathname==="/api/user/photo") {
+    requireUser(user);
+    const body=await readBody(req);
+    const photo=String(body.photo||"");
+    if(!photo.startsWith("data:image/")) fail(400,"Invalid image format.");
+    db.prepare("UPDATE users SET avatar_photo=? WHERE id=?").run(photo,user.id);
+    const updated=currentUser(user.id);
+    if(updated&&updated.role==="worker") indexWorker(updated);
+    return send(res,200,{ok:true,avatar_photo:photo});
   }
 
   return send(res,404,{message:"That API route was not found."});

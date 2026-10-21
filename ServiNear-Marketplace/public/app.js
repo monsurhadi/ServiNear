@@ -4,6 +4,17 @@
 // 1. STATE & UTILITIES
 // ==========================================================================
 
+
+const PROFESSION_ICONS = [
+  { id: "videographer", symbol: "📷", label: "Videographer" },
+  { id: "bike_owner", symbol: "🏍️", label: "Bike Owner" },
+  { id: "student", symbol: "🎓", label: "Student" },
+  { id: "unemployed", symbol: "🍲", label: "Unemployed" },
+  { id: "female", symbol: "💄", label: "Female" },
+  { id: "teacher", symbol: "📚", label: "Teacher" },
+  { id: "bd_citizen", symbol: "🇧🇩", label: "BD Citizen" }
+];
+
 let savedAlertPreference = "off";
 try { savedAlertPreference = window.localStorage.getItem("servinear-alerts") || "off"; } catch {}
 
@@ -504,6 +515,26 @@ function filteredProviders() {
   return rows;
 }
 
+
+let vectorSearchTimeout = null;
+async function triggerVectorSearch(query) {
+  clearTimeout(vectorSearchTimeout);
+  if (!query || query.trim().length < 2) {
+    state.vectorResults = null;
+    renderProviders();
+    return;
+  }
+  vectorSearchTimeout = setTimeout(async () => {
+    try {
+      const data = await api(`/api/vector/search?q=${encodeURIComponent(query)}&type=workers&limit=24`);
+      state.vectorResults = new Map(data.results.map(r => [r.entity_id, r]));
+      renderProviders();
+    } catch(e) {
+      console.error("Vector search error:", e);
+    }
+  }, 250);
+}
+
 function renderProviders() {
   const list = $("#provider-list");
   if (!list) return;
@@ -773,7 +804,7 @@ function renderTaskDetail(id) {
 }
 
 // ==========================================================================
-// 5. PROFILE PAGE (CHOLOBD SIDEBAR & WORKSPACE - IMAGES 3 & 4)
+// 5. PROFILE PAGE & SETTINGS (CHOLOBD WORKSPACE & SETTINGS - SCREENSHOTS 1, 2, 3, 4)
 // ==========================================================================
 
 function renderProfile() {
@@ -794,13 +825,20 @@ function renderProfile() {
   $("#profile-auth")?.classList.add("hidden");
 
   // Update Left Sidebar Header Card (Image 3)
-  const avatarLetter = (state.user.name || "U").slice(0, 1).toUpperCase();
   const avatarCircle = $("#profile-avatar-circle");
   if (avatarCircle) {
-    avatarCircle.innerHTML = `
-      <span>${avatarLetter}</span>
-      ${state.user.verified ? '<div class="profile-avatar-verified-badge"><i data-lucide="check"></i></div>' : ""}
-    `;
+    if (state.user.avatar_photo) {
+      avatarCircle.innerHTML = `
+        <img src="${state.user.avatar_photo}" alt="Avatar" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">
+        ${state.user.verified ? '<div class="profile-avatar-verified-badge"><i data-lucide="check"></i></div>' : ""}
+      `;
+    } else {
+      const avatarLetter = (state.user.name || "U").slice(0, 1).toUpperCase();
+      avatarCircle.innerHTML = `
+        <span>${avatarLetter}</span>
+        ${state.user.verified ? '<div class="profile-avatar-verified-badge"><i data-lucide="check"></i></div>' : ""}
+      `;
+    }
   }
 
   const nameEl = $("#profile-user-name");
@@ -808,9 +846,9 @@ function renderProfile() {
 
   const tagEl = $("#profile-user-tag");
   if (tagEl) {
-    const handle = state.user.email ? `@${state.user.email.split("@")[0]}` : "";
-    const occupation = state.user.occupation ? ` · ${state.user.occupation}` : "";
-    tagEl.textContent = `${handle}${occupation}`;
+    const handle = state.user.username ? state.user.username : (state.user.email ? `@${state.user.email.split("@")[0]}` : "");
+    const occ = state.user.occupation ? ` · ${state.user.occupation}` : "";
+    tagEl.textContent = `${handle}${occ}`;
   }
 
   const isCustomer = state.user.role === "customer";
@@ -841,8 +879,6 @@ function renderProfile() {
     }
   }
 
-  // Right pane tabs & content
-  let tabs;
   if (state.user.role === "admin") {
     root.innerHTML = `
       <div class="empty-state">
@@ -854,28 +890,328 @@ function renderProfile() {
     return;
   }
 
+  // If in Settings view (Matching Screenshots 1, 2, 3, 4)
+  if (state.profileView === "settings") {
+    renderSettingsView(root, myJobs.length);
+  } else {
+    renderActivityView(root, isCustomer, myJobs, myOffers, bidsReceived);
+  }
+
+  refreshIcons(root);
+}
+
+function renderSettingsView(root, jobCount) {
+  const dict = I18N[state.lang] || I18N.en;
+  root.innerHTML = `
+    <div class="settings-container">
+      <div class="settings-header-card">
+        <div class="flex justify-between items-center">
+          <h1 class="settings-title">${dict.settingsTitle || "Settings"}</h1>
+          <button class="button button-outline text-xs font-bold" id="toggle-view-activity-btn" type="button">
+            <i data-lucide="package"></i> ${state.lang === "bn" ? "আমার অর্ডার ও কাজ" : "My Orders & Work"} (${jobCount})
+          </button>
+        </div>
+        <div class="settings-top-tabs">
+          <button type="button" class="settings-tab-btn ${state.settingsTab === "account" ? "active" : ""}" data-settings-tab="account">
+            <i data-lucide="user"></i> <span>${dict.tabAccount || "Account"}</span>
+          </button>
+          <button type="button" class="settings-tab-btn ${state.settingsTab === "profile" ? "active" : ""}" data-settings-tab="profile">
+            <i data-lucide="user-check"></i> <span>${dict.tabProfile || "Profile"}</span>
+          </button>
+          <button type="button" class="settings-tab-btn ${state.settingsTab === "notifications" ? "active" : ""}" data-settings-tab="notifications">
+            <i data-lucide="bell"></i> <span>${dict.tabNotifications || "Notifications"}</span>
+          </button>
+          <button type="button" class="settings-tab-btn ${state.settingsTab === "help" ? "active" : ""}" data-settings-tab="help">
+            <i data-lucide="phone-call"></i> <span>${dict.tabBhaiHelp || "BhaiHelp"}</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="settings-card" id="settings-card-body">
+        <!-- Tab Content Loaded Below -->
+      </div>
+    </div>
+  `;
+
+  renderActiveSettingsTab();
+}
+
+function renderActiveSettingsTab() {
+  const card = $("#settings-card-body");
+  if (!card || !state.user) return;
+  const u = state.user;
+
+  if (state.settingsTab === "account") {
+    // Screenshot 1: Account Tab
+    card.innerHTML = `
+      <form id="settings-account-form" class="flex flex-col gap-4">
+        <!-- Language row -->
+        <div class="settings-row-between">
+          <div>
+            <strong>Language</strong>
+            <p>Choose the language for ServiNear on this account.</p>
+          </div>
+          <button type="button" class="lang-toggle-btn" id="settings-lang-toggle">
+            <span class="${state.lang === 'bn' ? 'lang-pill-bn font-bold' : 'text-muted'}">বাংলা</span> | 
+            <span class="${state.lang === 'en' ? 'lang-pill-en font-bold' : 'text-muted'}">English</span>
+          </button>
+        </div>
+
+        <!-- Display Name -->
+        <label class="settings-field-group">
+          <span>Display Name</span>
+          <input name="display_name" class="settings-input" required value="${escapeHtml(u.name || "")}">
+        </label>
+
+        <!-- Username -->
+        <label class="settings-field-group">
+          <span>Username</span>
+          <div class="input-addon-wrap">
+            <span class="input-addon">@</span>
+            <input name="username" class="settings-input" placeholder="yourhandle" value="${escapeHtml((u.username || "").replace(/^@/, ""))}">
+          </div>
+        </label>
+
+        <!-- Email -->
+        <label class="settings-field-group">
+          <span>Email</span>
+          <input name="email" class="settings-input" value="${escapeHtml(u.email)}" disabled>
+          <small class="text-xs text-muted">Email cannot be changed</small>
+        </label>
+
+        <!-- Security Lock Notice -->
+        <div class="settings-lock-box">
+          <i data-lucide="lock"></i>
+          <span>Password changes are handled via your email provider (Google/Credentials).</span>
+        </div>
+
+        <!-- Save Button -->
+        <div class="settings-footer-actions">
+          <button type="submit" class="settings-save-btn">
+            <i data-lucide="save"></i>
+            <span>Save Changes</span>
+          </button>
+        </div>
+      </form>
+    `;
+  } else if (state.settingsTab === "profile") {
+    // Screenshots 2 & 3: Profile Tab
+    const skillsList = Array.isArray(u.skills) ? u.skills : [];
+    card.innerHTML = `
+      <form id="settings-profile-form" class="flex flex-col gap-4">
+        <!-- Avatar Row -->
+        <div class="settings-avatar-row">
+          <div class="settings-avatar-circle" id="settings-avatar-preview">
+            ${u.avatar_photo ? `<img src="${u.avatar_photo}" alt="Avatar">` : `<span>${escapeHtml((u.name||"U").slice(0,1).toUpperCase())}</span>`}
+          </div>
+          <div class="settings-avatar-info">
+            <strong>${escapeHtml(u.name)}</strong>
+            <button type="button" class="change-photo-btn" id="change-photo-trigger-btn">
+              <i data-lucide="camera"></i> Change photo
+            </button>
+          </div>
+        </div>
+
+        <!-- Bio -->
+        <label class="settings-field-group">
+          <span>Bio</span>
+          <textarea name="bio" id="settings-bio-textarea" class="settings-textarea" maxlength="300" placeholder="Tell people about yourself...">${escapeHtml(u.bio || "")}</textarea>
+          <div class="text-right text-xs text-muted"><span id="bio-char-count">${(u.bio || "").length}</span>/300</div>
+        </label>
+
+        <!-- City & Phone (2 columns) -->
+        <div class="grid grid-cols-2 gap-3">
+          <label class="settings-field-group">
+            <span>City</span>
+            <input name="city" class="settings-input" value="${escapeHtml(u.city || u.area || "Dhaka")}">
+          </label>
+          <label class="settings-field-group">
+            <span>Phone</span>
+            <input name="phone" class="settings-input" placeholder="01XXXXXXXXX" value="${escapeHtml(u.phone || "")}">
+          </label>
+        </div>
+
+        <!-- Occupation -->
+        <label class="settings-field-group">
+          <span>Occupation</span>
+          <input name="occupation" class="settings-input" placeholder="e.g. Student, Electrician, Designer" value="${escapeHtml(u.occupation || "")}">
+        </label>
+
+        <!-- Profession Icon Selection Cards -->
+        <div class="settings-field-group">
+          <span>Profession Icon</span>
+          <div class="profession-icons-grid" id="profession-icons-grid">
+            ${PROFESSION_ICONS.map((p) => `
+              <div class="profession-icon-card ${(u.profession_icon || "student") === p.id ? "selected" : ""}" data-prof-id="${p.id}">
+                <span class="profession-symbol">${p.symbol}</span>
+                <span class="profession-label">${p.label}</span>
+              </div>
+            `).join("")}
+          </div>
+          <input type="hidden" name="profession_icon" id="selected-profession-icon" value="${escapeHtml(u.profession_icon || "student")}">
+        </div>
+
+        <!-- Skills Input & Chips -->
+        <div class="settings-field-group">
+          <span>Skills</span>
+          <div class="skill-input-row">
+            <input id="skill-text-input" class="settings-input" placeholder="Add a skill (e.g. AC Repair, Driving, Painting)">
+            <button type="button" class="button button-teal" id="add-skill-chip-btn">Add</button>
+          </div>
+          <div class="skill-chips-wrap" id="skill-chips-container">
+            ${skillsList.map((skill, index) => `
+              <span class="skill-chip">
+                <span>${escapeHtml(skill)}</span>
+                <button type="button" data-remove-skill="${index}">×</button>
+              </span>
+            `).join("")}
+          </div>
+        </div>
+
+        <!-- Save Button -->
+        <div class="settings-footer-actions">
+          <button type="submit" class="settings-save-btn">
+            <i data-lucide="save"></i>
+            <span>Save Changes</span>
+          </button>
+        </div>
+      </form>
+    `;
+  } else if (state.settingsTab === "notifications") {
+    // Screenshot 4: Notifications Tab
+    card.innerHTML = `
+      <form id="settings-notifications-form" class="flex flex-col gap-2">
+        <div class="settings-switch-row">
+          <div class="settings-switch-info">
+            <strong>Reactions on your posts</strong>
+            <p>When someone reacts to your posts</p>
+          </div>
+          <label class="switch-toggle">
+            <input type="checkbox" name="notif_reactions" ${u.notif_reactions !== false && u.notif_reactions !== 0 ? "checked" : ""}>
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+
+        <div class="settings-switch-row">
+          <div class="settings-switch-info">
+            <strong>Comments</strong>
+            <p>When someone comments on your posts</p>
+          </div>
+          <label class="switch-toggle">
+            <input type="checkbox" name="notif_comments" ${u.notif_comments !== false && u.notif_comments !== 0 ? "checked" : ""}>
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+
+        <div class="settings-switch-row">
+          <div class="settings-switch-info">
+            <strong>Direct messages</strong>
+            <p>New messages from other users</p>
+          </div>
+          <label class="switch-toggle">
+            <input type="checkbox" name="notif_messages" ${u.notif_messages !== false && u.notif_messages !== 0 ? "checked" : ""}>
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+
+        <div class="settings-switch-row">
+          <div class="settings-switch-info">
+            <strong>🔔 Enable all notifications</strong>
+            <p>Receive all app notifications</p>
+          </div>
+          <label class="switch-toggle">
+            <input type="checkbox" name="notif_all" ${u.notif_all !== false && u.notif_all !== 0 ? "checked" : ""}>
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+
+        <div class="settings-switch-row">
+          <div class="settings-switch-info">
+            <strong>Enable update notifications</strong>
+            <p>Get notified about platform updates and announcements</p>
+          </div>
+          <label class="switch-toggle">
+            <input type="checkbox" name="notif_updates" ${u.notif_updates !== false && u.notif_updates !== 0 ? "checked" : ""}>
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+
+        <div class="settings-switch-row">
+          <div class="settings-switch-info">
+            <strong>💼 Hire requests</strong>
+            <p>${u.verified ? "Get notified when customers directly request your service" : "Requires verification — submit it from the Get Verified modal."}</p>
+          </div>
+          <label class="switch-toggle">
+            <input type="checkbox" name="notif_hire" ${u.notif_hire ? "checked" : ""} ${u.verified ? "" : "disabled"}>
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+
+        <!-- Save Button -->
+        <div class="settings-footer-actions mt-3">
+          <button type="submit" class="settings-save-btn">
+            <i data-lucide="save"></i>
+            <span>Save Changes</span>
+          </button>
+        </div>
+      </form>
+    `;
+  } else if (state.settingsTab === "help") {
+    // BhaiHelp Tab
+    card.innerHTML = `
+      <div class="flex flex-col gap-4">
+        <div class="help-hotline mb-2">
+          <i data-lucide="life-buoy"></i>
+          <span>
+            <strong>BhaiHelp Instant Helpline</strong>
+            <small>09612-345678 · Available 9am–9pm daily</small>
+          </span>
+          <a href="tel:09612345678" class="button button-teal text-xs ml-auto">Call Helpline</a>
+        </div>
+
+        <form id="bhaihelp-form" class="form-grid">
+          <h3 class="field-span font-bold text-sm">Send a direct message to support</h3>
+          <label class="form-field field-span">Subject
+            <input name="subject" required placeholder="Account or service inquiry">
+          </label>
+          <label class="form-field field-span">Message
+            <textarea name="message" required rows="4" placeholder="Describe how we can assist you..."></textarea>
+          </label>
+          <button class="button button-teal field-span">Submit to Support Team</button>
+        </form>
+      </div>
+    `;
+  }
+
+  refreshIcons(card);
+}
+
+function renderActivityView(root, isCustomer, myJobs, myOffers, bidsReceived) {
+  let tabs;
   if (isCustomer) {
     tabs = `
       <button class="profile-tab active" data-profile-tab="posts">My Tasks <span>${myJobs.length}</span></button>
       <button class="profile-tab" data-profile-tab="offers">Bids Received <span>${bidsReceived.length}</span></button>
-      <button class="profile-tab" data-profile-tab="account">Account &amp; Contact</button>
     `;
   } else {
     tabs = `
       <button class="profile-tab active" data-profile-tab="alerts">Job Alerts</button>
       <button class="profile-tab" data-profile-tab="bids">My Offers <span>${myOffers.length}</span></button>
       <button class="profile-tab" data-profile-tab="history">Job History <span>${myJobs.length}</span></button>
-      <button class="profile-tab" data-profile-tab="account">Provider Profile</button>
     `;
   }
 
   root.innerHTML = `
-    <div class="profile-tabs" role="tablist">${tabs}</div>
+    <div class="flex justify-between items-center mb-3">
+      <div class="profile-tabs" role="tablist">${tabs}</div>
+      <button class="button button-outline text-xs font-bold" id="toggle-view-settings-btn" type="button">
+        <i data-lucide="settings"></i> ${state.lang === "bn" ? "প্রোফাইল সেটিংস" : "Profile Settings"}
+      </button>
+    </div>
     <div class="profile-panel" id="profile-panel"></div>
   `;
 
   renderProfilePanel(isCustomer ? "posts" : "alerts");
-  refreshIcons(root);
 }
 
 function renderProfilePanel(tab) {
@@ -885,41 +1221,9 @@ function renderProfilePanel(tab) {
   const isCustomer = state.user.role === "customer";
   const myJobs = state.jobs.filter((j) => isCustomer ? j.customer_id === state.user.id : state.offers.some((o) => o.job_id === j.id && o.worker_id === state.user.id));
   const myOffers = state.offers.filter((o) => o.worker_id === state.user.id);
+  const bidsReceived = state.offers.filter((o) => myJobs.some((j) => j.id === o.job_id));
 
-  if (tab === "account") {
-    panel.innerHTML = `
-      <form id="profile-form" class="form-grid profile-form">
-        <label class="form-field">Full Name
-          <input name="name" required value="${escapeHtml(state.user.name)}">
-        </label>
-        <label class="form-field">Phone Number
-          <input name="phone" required value="${escapeHtml(state.user.phone || "")}">
-        </label>
-        <label class="form-field">Area / City
-          <input name="area" required value="${escapeHtml(state.user.area || "")}">
-        </label>
-        <label class="form-field">Private Address (for tasks)
-          <input name="address" value="${escapeHtml(state.user.address || "")}">
-        </label>
-        ${state.user.role === "worker" ? `
-          <label class="form-field">Category
-            <select name="category">${categoryOptions()}</select>
-          </label>
-          <label class="form-field">Starting Rate (৳)
-            <input name="rate" type="number" min="1" value="${Number(state.user.rate || 500)}">
-          </label>
-          <label class="form-field field-span">Professional Bio &amp; Experience
-            <textarea name="bio" rows="3">${escapeHtml(state.user.bio || "")}</textarea>
-          </label>
-        ` : ""}
-        <button class="button button-teal field-span">Save Profile Changes</button>
-      </form>
-    `;
-    if (state.user.role === "worker") {
-      const catSelect = $("#profile-form [name=category]");
-      if (catSelect) catSelect.value = state.user.category || "";
-    }
-  } else if (tab === "alerts") {
+  if (tab === "alerts") {
     const matches = state.jobs.filter((j) => j.status === "open" && (!state.alertOnly || j.category === state.user.category));
     panel.innerHTML = `
       <div class="profile-panel-head">
@@ -951,10 +1255,7 @@ function renderProfilePanel(tab) {
       </div>
     `;
   } else if (tab === "offers" || tab === "bids") {
-    const bidsList = isCustomer
-      ? state.offers.filter((o) => myJobs.some((j) => j.id === o.job_id))
-      : myOffers;
-
+    const bidsList = isCustomer ? bidsReceived : myOffers;
     panel.innerHTML = `
       <div class="profile-panel-head">
         <div>
@@ -983,7 +1284,6 @@ function renderProfilePanel(tab) {
       </div>
     `;
   }
-
   refreshIcons(panel);
 }
 
