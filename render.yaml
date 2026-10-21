@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: servinear-marketplace
+    env: node
+    plan: free
+    region: oregon
+    rootDir: ServiNear-Marketplace
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+    healthCheckPath: /api/health

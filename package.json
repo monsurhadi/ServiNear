@@ -1,0 +1,15 @@
+{
+  "name": "servinear-root",
+  "version": "2.0.0",
+  "private": true,
+  "description": "ServiNear Marketplace root entrypoint for Render and Cloud PaaS",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "install-deps": "cd ServiNear-Marketplace && npm install",
+    "postinstall": "cd ServiNear-Marketplace && npm install",
+    "build": "cd ServiNear-Marketplace && npm install",
+    "start": "node ServiNear-Marketplace/server.js"
+  }
+}

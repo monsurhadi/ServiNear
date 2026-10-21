@@ -12,9 +12,9 @@ const PUBLIC_DIR = path.join(ROOT, "public");
 const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, "data");
 const PORT = Number(process.env.PORT || 5000);
 const SESSION_TTL = 7 * 24 * 60 * 60;
-const WEB_ORIGIN = String(process.env.WEB_ORIGIN || "").replace(/\/$/, "");
+const WEB_ORIGIN = String(process.env.WEB_ORIGIN || process.env.RENDER_EXTERNAL_URL || "").replace(/\/$/, "");
 const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || "";
-if (process.env.NODE_ENV === "production" && !WEB_ORIGIN.startsWith("https://")) {
+if (process.env.NODE_ENV === "production" && WEB_ORIGIN && !WEB_ORIGIN.startsWith("https://")) {
   throw new Error("Production requires HTTPS WEB_ORIGIN.");
 }
 const sessions = new Map();
@@ -1321,4 +1321,22 @@ function sendToUser(userId, payload) {
       }
     }
   }
+}
+
+
+// ============================================================================
+// 24/7 KEEP-ALIVE WORKER (PREVENTS RENDER FREE TIER SLEEP & 50s DELAY)
+// ============================================================================
+const keepAliveUrl = process.env.RENDER_EXTERNAL_URL || process.env.KEEP_ALIVE_URL || "";
+if (keepAliveUrl) {
+  const pingTarget = `${keepAliveUrl.replace(/\/$/, "")}/api/health`;
+  console.log(`[Keep-Alive] Self-ping active every 13 min: ${pingTarget}`);
+  setInterval(() => {
+    try {
+      const client = pingTarget.startsWith("https") ? require("node:https") : require("node:http");
+      client.get(pingTarget, (res) => {
+        // Keeps Render container awake 24/7 with zero spin-down delay
+      }).on("error", () => {});
+    } catch {}
+  }, 13 * 60 * 1000);
 }
