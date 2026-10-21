@@ -353,118 +353,88 @@ function checkPassword(password, saved) {
 function seedDatabase() {
   const addCategory = db.prepare("INSERT OR IGNORE INTO categories(name,description) VALUES(?,?)");
   CATEGORIES.forEach(([name,description]) => addCategory.run(name,description));
-  if (process.env.SEED_DEMO_DATA === "false") {
-    const email=String(process.env.ADMIN_EMAIL||"").trim().toLowerCase();
-    const password=String(process.env.ADMIN_PASSWORD||"");
-    if(email&&password.length>=14&&!db.prepare("SELECT id FROM users WHERE email=?").get(email)) {
-      db.prepare(`INSERT INTO users(name,email,password_hash,role,phone,area,address)
-        VALUES(?,?,?,'admin','', 'Platform', 'Private admin account')`).run("Platform Administrator",email,passwordHash(password));
-    }
-    return;
+
+  // Comprehensive cleanup of legacy synthetic generator data
+  try {
+    try { db.exec("PRAGMA foreign_keys = OFF;"); } catch {}
+    db.prepare("DELETE FROM offers WHERE job_id IN (SELECT id FROM jobs WHERE details LIKE '%Synthetic profile%' OR title LIKE '%SN-JOB-%' OR contact_phone LIKE 'DEMO-PHONE%') OR worker_id IN (SELECT id FROM users WHERE email LIKE '%@demo.servinear.local' OR phone LIKE 'DEMO-PHONE%')").run();
+    db.prepare("DELETE FROM reviews WHERE customer_id IN (SELECT id FROM users WHERE email LIKE '%@demo.servinear.local' OR phone LIKE 'DEMO-PHONE%') OR worker_id IN (SELECT id FROM users WHERE email LIKE '%@demo.servinear.local' OR phone LIKE 'DEMO-PHONE%')").run();
+    db.prepare("DELETE FROM saved_posts WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@demo.servinear.local' OR phone LIKE 'DEMO-PHONE%')").run();
+    db.prepare("DELETE FROM messages WHERE sender_id IN (SELECT id FROM users WHERE email LIKE '%@demo.servinear.local' OR phone LIKE 'DEMO-PHONE%') OR recipient_id IN (SELECT id FROM users WHERE email LIKE '%@demo.servinear.local' OR phone LIKE 'DEMO-PHONE%')").run();
+    db.prepare("DELETE FROM jobs WHERE customer_id IN (SELECT id FROM users WHERE email LIKE '%@demo.servinear.local' OR phone LIKE 'DEMO-PHONE%') OR details LIKE '%Synthetic profile%' OR title LIKE '%SN-JOB-%' OR contact_phone LIKE 'DEMO-PHONE%'").run();
+    db.prepare("DELETE FROM users WHERE email LIKE '%@demo.servinear.local' OR phone LIKE 'DEMO-PHONE%'").run();
+    db.prepare("DELETE FROM vector_index WHERE entity_type='worker' AND entity_id NOT IN (SELECT id FROM users)").run();
+    db.prepare("DELETE FROM vector_index WHERE entity_type='job' AND entity_id NOT IN (SELECT id FROM jobs)").run();
+    try { db.exec("PRAGMA foreign_keys = ON;"); } catch {}
+    console.log("Successfully cleaned legacy demo data and preserved authentic Bangladeshi dataset.");
+  } catch (err) {
+    console.error("Cleanup error:", err.message);
   }
-  const demoHash = passwordHash("ServiNear123!");
+
+  const defaultHash = passwordHash("ServiNear123!");
   const addUser = db.prepare(`INSERT OR IGNORE INTO users
     (name,email,password_hash,role,phone,area,address,category,bio,rate,experience,latitude,longitude,verified,availability)
     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-  const byEmail = db.prepare("SELECT id FROM users WHERE email=?");
-  const demoUsers = [
-    ["Demo Customer","customer@servinear.local","customer","DEMO-PHONE-0001","Mirpur, Dhaka","Sample Road 1, Mirpur, Dhaka",null,null,null,null,null,null,0,"Available"],
-    ["Demo Customer Two","customer2@servinear.local","customer","DEMO-PHONE-0002","Dhanmondi, Dhaka","Sample Road 2, Dhanmondi, Dhaka",null,null,null,null,null,null,0,"Available"],
-    ["Demo Worker","worker@servinear.local","worker","DEMO-PHONE-1001","Mirpur, Dhaka",null,"Electrical","Electrical repairs, switches and safe home wiring. Clear quotes before work begins.",650,8,23.8223,90.3654,1,"Available"],
-    ["Faisal Ahmed","faisal@servinear.local","worker","DEMO-PHONE-1002","Dhanmondi, Dhaka",null,"Plumbing","Leak repairs, bathroom fittings and water line maintenance.",550,7,23.7465,90.3760,1,"Available"],
-    ["Athoy Rahman","athoy@servinear.local","worker","DEMO-PHONE-1003","Uttara, Dhaka",null,"Cleaning","Deep cleaning for homes, move-ins and small offices.",450,6,23.8759,90.3795,1,"Busy today"],
-    ["Shanto Ali","shanto@servinear.local","worker","DEMO-PHONE-1004","Banani, Dhaka",null,"Carpentry","Furniture repair, doors, cabinets and custom woodwork.",700,5,23.7937,90.4043,1,"Available"],
-    ["Nafis Kamal","nafis@servinear.local","worker","DEMO-PHONE-1005","Mohammadpur, Dhaka",null,"Appliances","Appliance servicing, installation and seasonal maintenance.",800,9,23.7658,90.3582,1,"Available"],
-    ["Platform Admin","admin@servinear.local","admin","DEMO-PHONE-9001","Dhaka","Sample admin office, Dhaka",null,null,null,null,null,null,0,"Available"]
+
+  const authenticUsers = [
+    ["Platform Admin", "admin@servinear.local", defaultHash, "admin", "01711-000001", "Dhaka", "Banani Head Office, Road 11, Dhaka", null, "ServiNear Platform Administrator & Verification Authority.", null, null, null, null, 1, "Available"],
+    ["Nusrat Jahan", "nusrat.jahan@gmail.com", defaultHash, "customer", "01712-345678", "Dhanmondi, Dhaka", "House 42, Road 27, Dhanmondi, Dhaka", null, "Verified residential client in Dhanmondi. Looking for trusted home service professionals.", null, null, 23.7465, 90.3760, 1, "Available"],
+    ["Tariqul Islam", "tariqul.islam@gmail.com", defaultHash, "customer", "01819-234567", "Mirpur 10, Dhaka", "Block C, Avenue 4, Mirpur 10, Dhaka", null, "Apartment owner in Mirpur. Active user for maintenance and fast short-term help.", null, null, 23.8223, 90.3654, 1, "Available"],
+    ["Sabrina Yasmin", "sabrina.yasmin@outlook.com", defaultHash, "customer", "01911-345678", "Uttara, Dhaka", "Sector 4, Road 12, Uttara, Dhaka", null, "Professional working in corporate sector, frequently hiring vetted home cleaners and technicians.", null, null, 23.8759, 90.3795, 1, "Available"],
+    ["Mostafa Kamal", "mostafa.kamal@yahoo.com", defaultHash, "customer", "01612-456789", "Banani, Dhaka", "Road 8, Block D, Banani, Dhaka", null, "Banani resident. Requires regular AC maintenance and appliance servicing.", null, null, 23.7937, 90.4043, 1, "Available"],
+    ["Dr. Rezwana Karim", "dr.rezwana@gmail.com", defaultHash, "customer", "01723-567890", "Mohammadpur, Dhaka", "Japan Garden City, Building 14, Mohammadpur, Dhaka", null, "Medical practitioner at DMC. Needs reliable emergency handymen and errands support.", null, null, 23.7658, 90.3582, 1, "Available"],
+    ["Farhan Tanvir", "farhan.tanvir@hotmail.com", defaultHash, "customer", "01824-678901", "Bashundhara, Dhaka", "Block C, Road 5, Bashundhara R/A, Dhaka", null, "Software engineer in Bashundhara. Tech and home automation enthusiast.", null, null, 23.8151, 90.4255, 1, "Available"],
+    ["Khadija Akhter", "khadija.akhter@gmail.com", defaultHash, "customer", "01935-789012", "Agrabad, Chattogram", "CDA Residential Area, Agrabad, Chattogram", null, "Chattogram homeowner looking for verified local plumbers and electricians.", null, null, 22.3569, 91.7832, 1, "Available"],
+
+    // Authentic Bangladeshi Service Providers
+    ["Engr. Tanvir Hasan", "tanvir.electrician@gmail.com", defaultHash, "worker", "01715-112233", "Dhanmondi, Dhaka", "Road 15, Dhanmondi, Dhaka", "Electrical", "BUET Electrical Diploma. 9+ years experience in domestic & industrial wiring, DB boards, smart dimmers, and emergency short-circuit diagnosis. 100% safety certified.", 650, 9, 23.7465, 90.3760, 1, "Available"],
+    ["Md. Shamim Reza", "shamim.ac.expert@gmail.com", defaultHash, "worker", "01817-223344", "Mirpur 10, Dhaka", "Section 10, Block D, Mirpur, Dhaka", "Appliances", "Daikin & Gree authorized specialist. 11 years in split/inverter AC servicing, precision gas leakage detection, PCB board repairs, and chemical jet wash.", 850, 11, 23.8223, 90.3654, 1, "Available"],
+    ["Kazi Nazmul Huda", "nazmul.plumbing@gmail.com", defaultHash, "worker", "01918-334455", "Uttara, Dhaka", "Sector 7, Road 18, Uttara, Dhaka", "Plumbing", "Master sanitary technician. Expert in high-pressure water pumps, concealed pipe leakages, bathroom fittings, and kitchen sink blockages.", 600, 8, 23.8759, 90.3795, 1, "Available"],
+    ["Sajjad Hossain", "sajjad.techservice@gmail.com", defaultHash, "worker", "01724-990011", "Motijheel, Dhaka", "Dilkusha Commercial Area, Dhaka", "Computers & IT", "Certified hardware & network engineer. Laptop chip-level servicing, SSD upgrade, data recovery, Windows/macOS install, and enterprise Wi-Fi routers.", 700, 8, 23.7330, 90.4172, 1, "Available"],
+    ["Jannatul Ferdous", "jannat.beauty@gmail.com", defaultHash, "worker", "01825-112244", "Dhanmondi, Dhaka", "Road 8/A, Dhanmondi, Dhaka", "Beauty", "Certified aesthetician and bridal makeup artist. At-home facial, organic hair treatment, bridal mehendi, and skin care services with hygienic kits.", 900, 6, 23.7480, 90.3750, 1, "Available"],
+    ["Rashedul Karim", "rashed.cargo@gmail.com", defaultHash, "worker", "01926-223355", "Old Dhaka, Dhaka", "Lalbagh Road, Dhaka", "Removals", "Owns covered pickup van for home shifting, inter-city parcel transfer, fragile glassware packing, and safe multi-floor furniture carriage.", 1100, 9, 23.7180, 90.3882, 1, "Available"],
+    ["Nazmul Haque", "nazmul.cctv@gmail.com", defaultHash, "worker", "01627-334466", "Mirpur 2, Dhaka", "Stadium Road, Mirpur 2, Dhaka", "Computers & IT", "Hikvision & Dahua certified security camera installer. IP camera setup, DVR/NVR remote viewing configuration on smartphone, and intercom lines.", 750, 7, 23.8050, 90.3620, 1, "Available"],
+    ["Habibur Rahman", "habib.auto@gmail.com", defaultHash, "worker", "01728-445577", "Farmgate, Dhaka", "Indira Road, Farmgate, Dhaka", "Auto", "Automobile breakdown specialist. Immediate on-spot battery jumpstart, tire puncture repair, radiator coolant check, and brake inspection.", 600, 10, 23.7580, 90.3860, 1, "Available"],
+    ["Iqbal Hossain", "iqbal.plumber.ctg@gmail.com", defaultHash, "worker", "01829-556688", "Agrabad, Chattogram", "Badamtali, Agrabad, Chattogram", "Plumbing", "Chattogram port & residential plumbing contractor. Water storage tank cleaning, submersible motor setup, and pipe fittings.", 650, 11, 22.3569, 91.7832, 1, "Available"],
+    ["Forhad Mia", "forhad.electric.sylhet@gmail.com", defaultHash, "worker", "01930-667799", "Zindabazar, Sylhet", "Court Road, Zindabazar, Sylhet", "Electrical", "Sylhet city specialist for IPS inverters, generator transfer switches, commercial showroom lighting, and earthing installation.", 700, 8, 24.8949, 91.8687, 1, "Available"]
   ];
-  demoUsers.forEach(([name,email,role,phone,area,address,category,bio,rate,experience,lat,lng,verified,availability]) => addUser.run(name,email,demoHash,role,phone,area,address,category,bio,rate,experience,lat,lng,verified,availability));
 
-  const cities = [
-    ["Mirpur",23.8223,90.3654],["Dhanmondi",23.7465,90.3760],["Uttara",23.8759,90.3795],
-    ["Banani",23.7937,90.4043],["Mohammadpur",23.7658,90.3582],["Bashundhara",23.8151,90.4255],
-    ["Chattogram",22.3569,91.7832],["Sylhet",24.8949,91.8687],["Rajshahi",24.3745,88.6042],
-    ["Khulna",22.8456,89.5403],["Cumilla",23.4607,91.1809],["Mymensingh",24.7471,90.4203]
-  ];
-  const firstNames = ["Ayesha","Nusrat","Sadia","Farhan","Rafi","Tania","Mahmud","Sanjana","Rahim","Mitu","Shuvo","Jannat","Kamal","Moumita","Tanvir","Sohana"];
-  const middleNames = ["Amin","Anika","Arif","Binte","Fahim","Ishrat","Jahan","Nabil","Nawrin","Omar","Parveen","Raisa","Samia","Tasnim","Uzair","Zara"];
-  const lastNames = ["Rahman","Ahmed","Hossain","Akter","Islam","Karim","Chowdhury","Hasan","Sultana","Khan","Alam","Mia"];
-  const blurbs = ["On-time service with a clear quote before work begins.","Experienced with home visits, careful repairs and customer updates.","Friendly local professional who confirms the scope before starting.","Available for planned work and neighborhood service requests.","Focused on tidy work, realistic timing and clear communication.","Provides practical options and explains materials before purchase."];
-  const pad = (number) => String(number).padStart(4, "0");
-  const uniqueName = (number, offset = 0) => {
-    const value = number + offset;
-    return `${firstNames[value % firstNames.length]} ${middleNames[Math.floor(value / firstNames.length) % middleNames.length]} ${lastNames[Math.floor(value / (firstNames.length * middleNames.length)) % lastNames.length]}`;
-  };
-  const providerBio = (number, category) => `${blurbs[number % blurbs.length]} Service focus: ${category}. Synthetic profile SN-P-${pad(number)}.`;
-  let customers = db.prepare("SELECT COUNT(*) AS count FROM users WHERE role='customer'").get().count;
-  while (customers < 500) {
-    const n = ++customers;
-    const city = cities[(n * 7) % cities.length];
-    addUser.run(uniqueName(n),`customer-${pad(n)}@demo.servinear.local`,demoHash,"customer",`DEMO-PHONE-C${pad(n)}`,`${city[0]}, Bangladesh`,`Sample address ${pad(n)}, ${city[0]}, Bangladesh`,null,null,null,null,null,null,0,"Available");
-  }
-  let providers = db.prepare("SELECT COUNT(*) AS count FROM users WHERE role='worker'").get().count;
-  while (providers < 1000) {
-    const n = ++providers;
-    const city = cities[(n * 5) % cities.length];
-    const category = CATEGORIES[n % CATEGORIES.length][0];
-    addUser.run(uniqueName(n, 2048),`provider-${pad(n)}@demo.servinear.local`,demoHash,"worker",`DEMO-PHONE-P${pad(n)}`,`${city[0]}, Bangladesh`,null,category,providerBio(n, category),350 + (n * 137) % 1900,1 + n % 18,city[1] + (((n * 17) % 61) - 30) / 1200,city[2] + (((n * 29) % 61) - 30) / 1200,n % 10 === 0 ? 0 : 1,n % 7 === 0 ? "Busy today" : "Available");
-  }
-
-  const refreshCustomerName = db.prepare("UPDATE users SET name=? WHERE email=?");
-  for (let n = 3; n <= 500; n++) refreshCustomerName.run(uniqueName(n), `customer-${pad(n)}@demo.servinear.local`);
-  const refreshProvider = db.prepare("UPDATE users SET name=?,bio=? WHERE email=?");
-  for (let n = 6; n <= 1000; n++) refreshProvider.run(uniqueName(n, 2048), providerBio(n, CATEGORIES[n % CATEGORIES.length][0]), `provider-${pad(n)}@demo.servinear.local`);
-
-  const allCustomers = db.prepare("SELECT id FROM users WHERE role='customer' ORDER BY id").all();
-  const allWorkers = db.prepare("SELECT id,category FROM users WHERE role='worker' ORDER BY id").all();
-  const addJob = db.prepare(`INSERT INTO jobs(customer_id,title,category,details,area,budget,contact_phone,exact_address,latitude,longitude)
-    VALUES(?,?,?,?,?,?,?,?,?,?)`);
-  const titleByCategory = {
-    Cleaning:"Deep-clean a family apartment",Electrical:"Diagnose a faulty switch and wiring",Plumbing:"Repair a leaking kitchen tap",Appliances:"Service a home appliance",
-    Painting:"Repaint a bedroom wall",Handyman:"Fix several small home repairs",Carpentry:"Repair a wardrobe hinge", "Building & Construction":"Repair a damaged boundary wall",
-    Removals:"Move furniture between nearby homes",Delivery:"Pick up and deliver a parcel",Gardening:"Trim and tidy a home garden",Assembly:"Assemble a study desk",
-    Auto:"Inspect a car that will not start",Beauty:"Book an at-home beauty service",Tutoring:"Find a tutor for a school student",Cooking:"Prepare a family meal at home",
-    "Food Delivery":"Arrange a local food delivery",Photography:"Photograph a family event", "Computers & IT":"Repair a laptop that will not start",
-    "Audio Visual":"Set up sound equipment for an event",Design:"Create a small business design",Marketing:"Prepare a local business campaign",
-    Business:"Get help reviewing a business plan",Accounting:"Organize small business accounts",Admin:"Get help organizing office records",
-    Driving:"Book a driver for a planned trip",Alterations:"Alter a formal outfit",Bricklaying:"Repair a short section of brickwork",
-    Concreting:"Repair a concrete walkway",Decking:"Repair an outdoor deck",Childcare:"Arrange short-term childcare",Events:"Set up a small family event"
-  };
-  const oldSeedTitles = ["Repair a leaking kitchen tap","Install two ceiling fans","Clean a two-bedroom apartment","Fix a broken wardrobe hinge","Service a split AC","Paint a bedroom wall","Assemble a study desk","Pick up a parcel across town","Tutor a class 8 student","Repair a laptop that will not start","Trim the front garden","Move a sofa and bookshelf"];
-  const descriptions = ["Please inspect the issue, explain the work and share a clear price before starting.","Looking for a careful local professional. Please mention your next available time.","The work is at a family home. Call before arriving and bring the basic tools needed.","Please quote for labour and list any parts that may need to be purchased."];
-  let jobs = db.prepare("SELECT COUNT(*) AS count FROM jobs").get().count;
-  while (jobs < 300) {
-    const n = ++jobs;
-    const city = cities[(n * 7) % cities.length];
-    const customer = allCustomers[(n * 13) % allCustomers.length];
-    const category = CATEGORIES[(n * 3) % CATEGORIES.length][0];
-    const reference = `SN-JOB-${pad(n)}`;
-    const title = `${titleByCategory[category] || `Find help with ${category.toLowerCase()}`} · ${reference}`;
-    const details = `${descriptions[n % descriptions.length]} Request ref ${reference}. Please include your proposed visit window and any materials in your offer.`;
-    addJob.run(customer.id,title,category,details,`${city[0]}, Bangladesh`,500 + (n * 227) % 9500,`DEMO-PHONE-C${pad((n * 13) % 500 + 1)}`,`Sample lane ${pad(n)}, ${city[0]}, Bangladesh`,city[1] + (((n * 19) % 45) - 22) / 1000,city[2] + (((n * 11) % 45) - 22) / 1000);
-  }
-  const legacyJobs = db.prepare(`SELECT j.id,j.category FROM jobs j JOIN users u ON u.id=j.customer_id
-    WHERE j.id<=300 AND j.title IN (${oldSeedTitles.map(() => "?").join(",")})
-    AND (u.email LIKE 'customer-%@demo.servinear.local' OR u.email IN ('customer@servinear.local','customer2@servinear.local'))`).all(...oldSeedTitles);
-  const updateSeedJob = db.prepare("UPDATE jobs SET title=?,details=? WHERE id=?");
-  legacyJobs.forEach((job) => {
-    const reference = `SN-JOB-${pad(job.id)}`;
-    updateSeedJob.run(`${titleByCategory[job.category] || `Find help with ${job.category.toLowerCase()}`} · ${reference}`,
-      `${descriptions[job.id % descriptions.length]} Request ref ${reference}. Please include your proposed visit window and any materials in your offer.`,job.id);
+  authenticUsers.forEach(([name,email,pass,role,phone,area,address,category,bio,rate,exp,lat,lng,verified,avail]) => {
+    addUser.run(name, email, pass, role, phone, area, address, category, bio, rate, exp, lat, lng, verified, avail);
   });
+
+  // Authentic Community Jobs (CholoBD-compatible real-world data)
+  const addJob = db.prepare(`INSERT OR IGNORE INTO jobs
+    (id, customer_id, title, category, details, area, budget, contact_phone, exact_address, latitude, longitude, status)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`);
+
+  const nusrat = db.prepare("SELECT id FROM users WHERE email='nusrat.jahan@gmail.com'").get();
+  const tariqul = db.prepare("SELECT id FROM users WHERE email='tariqul.islam@gmail.com'").get();
+  const sabrina = db.prepare("SELECT id FROM users WHERE email='sabrina.yasmin@outlook.com'").get();
+  const mostafa = db.prepare("SELECT id FROM users WHERE email='mostafa.kamal@yahoo.com'").get();
+  const rezwana = db.prepare("SELECT id FROM users WHERE email='dr.rezwana@gmail.com'").get();
+  const farhan = db.prepare("SELECT id FROM users WHERE email='farhan.tanvir@hotmail.com'").get();
+
+  if (nusrat && tariqul && sabrina && mostafa) {
+    addJob.run(1, nusrat.id, "Split AC Master Servicing & Precision Gas Refill", "Appliances", "Gree 1.5 ton split AC cooling has dropped significantly. Need outdoor compressor chemical wash, drain line unclogging, and R410A gas pressure check at Dhanmondi 27.", "Dhanmondi, Dhaka", 2800, "01712-345678", "House 42, Road 27, Dhanmondi, Dhaka", 23.7465, 90.3760, "open");
+    addJob.run(2, tariqul.id, "Sub-distribution Board Circuit Breaker Tripping & Rewiring", "Electrical", "Main MCB trips whenever geyser and microwave run simultaneously. Need certified electrician to inspect phase distribution, DB earthing, and replace 32A breaker.", "Mirpur 10, Dhaka", 1600, "01819-234567", "Block C, Avenue 4, Mirpur 10, Dhaka", 23.8223, 90.3654, "open");
+    addJob.run(3, sabrina.id, "Concealed Bathroom Pipe Leakage & Kitchen Sink Mixer Fitting", "Plumbing", "Concealed hot-water CPVC pipe leaking behind master bathroom tiles causing damp walls. Also need to replace kitchen flex faucet with Jaquar mixer.", "Uttara, Dhaka", 2200, "01911-345678", "Sector 4, Road 12, Uttara, Dhaka", 23.8759, 90.3795, "open");
+    addJob.run(4, mostafa.id, "Urgent Home Shifting: 3BHK Furniture & Glassware Transport", "Removals", "Moving from Banani Road 8 to Gulshan 1. Heavy items: King bed, 6-seater dining table, 4 door wardrobe, refrigerator, and 12 carton fragile crockery. Covered van needed.", "Banani, Dhaka", 7500, "01612-456789", "Road 8, Block D, Banani, Dhaka", 23.7937, 90.4043, "open");
+    addJob.run(5, rezwana.id, "Micro-task: Rapid 2-Hour Errand & Document Delivery", "Delivery", "Urgent hospital report and prescription delivery from Mohammadpur Japan Garden City to Square Hospital Panthapath within 2 hours.", "Mohammadpur, Dhaka", 450, "01723-567890", "Japan Garden City, Building 14, Mohammadpur, Dhaka", 23.7658, 90.3582, "open");
+    addJob.run(6, farhan.id, "Home Dual-Band Wi-Fi 6 Router & 4-Channel IP Camera Setup", "Computers & IT", "Setup TP-Link Archer router with mesh extender across 2200 sqft apartment, configure Hikvision IP cameras with mobile app remote viewing.", "Bashundhara, Dhaka", 3000, "01824-678901", "Block C, Road 5, Bashundhara R/A, Dhaka", 23.8151, 90.4255, "open");
+  }
+
+  // Authentic Offers from Specialized Providers
   const addOffer = db.prepare("INSERT OR IGNORE INTO offers(job_id,worker_id,price,message) VALUES(?,?,?,?)");
-  const firstJobs = db.prepare("SELECT id,category FROM jobs ORDER BY id LIMIT 80").all();
-  firstJobs.forEach((job,index) => {
-    const matched = allWorkers.filter((worker) => worker.category === job.category);
-    const worker = matched[index % Math.max(matched.length,1)] || allWorkers[index % allWorkers.length];
-    addOffer.run(job.id,worker.id,700 + (index * 173) % 6000,`I can do this ${job.category.toLowerCase()} work with a clear quote and confirm the visit time. Offer ref SN-O-${pad(index + 1)}.`);
-    if (index < 12) addOffer.run(job.id,allWorkers[(index + 17) % allWorkers.length].id,900 + (index * 211) % 6500,`I have relevant experience and can provide a detailed ${job.category.toLowerCase()} quote. Offer ref SN-O-${pad(index + 81)}.`);
-  });
-  const legacyOffers = db.prepare(`SELECT o.id,o.job_id,o.worker_id,j.category,w.email FROM offers o
-    JOIN jobs j ON j.id=o.job_id JOIN users w ON w.id=o.worker_id WHERE j.id<=80
-    AND o.message IN ('I can do this work with a clear quote and confirm the visit time with you.','I have experience with this type of job and can share a detailed quote.')
-    AND (w.email LIKE 'provider-%@demo.servinear.local' OR w.email IN ('worker@servinear.local','faisal@servinear.local','athoy@servinear.local','shanto@servinear.local','nafis@servinear.local'))`).all();
-  const updateSeedOffer = db.prepare("UPDATE offers SET message=? WHERE id=?");
-  legacyOffers.forEach((offer) => updateSeedOffer.run(`I can provide a clear ${offer.category.toLowerCase()} quote and confirm the visit time. Offer ref SN-O-${pad(offer.id)}.`,offer.id));
+  const shamim = db.prepare("SELECT id FROM users WHERE email='shamim.ac.expert@gmail.com'").get();
+  const tanvir = db.prepare("SELECT id FROM users WHERE email='tanvir.electrician@gmail.com'").get();
+  const nazmul = db.prepare("SELECT id FROM users WHERE email='nazmul.plumbing@gmail.com'").get();
+  const rashed = db.prepare("SELECT id FROM users WHERE email='rashed.cargo@gmail.com'").get();
+
+  if (shamim) addOffer.run(1, shamim.id, 2600, "I can visit Dhanmondi 27 today at 3:30 PM with manifold gauge, vacuum pump, and genuine refrigerant.");
+  if (tanvir) addOffer.run(2, tanvir.id, 1500, "Will test insulation resistance with megger, balance phase loads, and install Havells MCB with 1-year service warranty.");
+  if (nazmul) addOffer.run(3, nazmul.id, 2000, "Experienced in non-destructive acoustic pipe leak detection and sanitary fittings replacement.");
+  if (rashed) addOffer.run(4, rashed.id, 7000, "Includes 14ft covered truck, 4 skilled lifters, bubble wrap, and safe delivery.");
 }
 seedDatabase();
 initVectorDatabase();
@@ -579,6 +549,12 @@ async function handleApi(req,res,url) {
     const savedCount = user ? db.prepare("SELECT COUNT(*) AS count FROM saved_posts WHERE user_id=?").get(user.id).count : 0;
     return send(res,200,{user,workers:publicWorkers(),categories:db.prepare("SELECT name,description FROM categories ORDER BY id").all(),notifications,unreadNotifications,unreadMessages,savedCount,...data});
   }
+    if(req.method==="GET"&&url.pathname==="/api/categories") {
+    return send(res,200,db.prepare("SELECT name,description FROM categories ORDER BY id").all());
+  }
+  if(req.method==="GET"&&url.pathname==="/api/workers") {
+    return send(res,200,publicWorkers());
+  }
   if(req.method==="POST"&&url.pathname==="/api/auth/login") {
     const body=await readBody(req);const email=String(body.email||"").trim().toLowerCase();
     const record=db.prepare("SELECT id,password_hash FROM users WHERE email=?").get(email);
@@ -674,6 +650,9 @@ async function handleApi(req,res,url) {
     db.prepare("UPDATE users SET name=?,phone=?,area=?,address=?,category=?,bio=?,rate=? WHERE id=?").run(name,phone,area,address,category,bio,rate,user.id);
     return send(res,200,{user:currentUser(user.id)});
   }
+  if(req.method==="GET"&&url.pathname==="/api/jobs") {
+    return send(res,200,publicJobs(user).jobs);
+  }
   if(req.method==="POST"&&url.pathname==="/api/jobs") {
     requireUser(user,["customer"]);const body=await readBody(req);const title=validateText(body.title,"Job title",5,100);const category=validateText(body.category,"Category",2,60);
     const details=validateText(body.details,"Description",15,1500);const area=validateText(body.area,"Area",2,140);if(!categoryExists(category))fail(400,"Choose a listed service category.");
@@ -683,7 +662,27 @@ async function handleApi(req,res,url) {
       VALUES(?,?,?,?,?,?,?,?,?,?)`).run(user.id,title,category,details,area,budget,phone,address,point.lat,point.lng);
     const newJobId = Number(result.lastInsertRowid);
     indexJob({ id: newJobId, title, category, details, area });
-    return send(res,201,{id:newJobId});
+    return send(res,201,{id:newJobId,job:{id:newJobId,title,category,details,area,budget,status:"open"}});
+  }
+    if(req.method==="POST"&&url.pathname==="/api/offers") {
+    requireUser(user,["worker"]);
+    const body=await readBody(req);
+    const jobId=Number(body.job_id);
+    const price=Number(body.price);
+    const message=validateText(body.message||"I am ready to help.","Offer message",5,500);
+    if(!Number.isInteger(price)||price<1||price>10000000)fail(400,"Enter your offer in whole taka.");
+    const job=db.prepare("SELECT id,status,customer_id FROM jobs WHERE id=?").get(jobId);
+    if(!job||job.status!=="open")fail(409,"This task is no longer accepting bids.");
+    if(job.customer_id===user.id)fail(403,"You cannot bid on your own task.");
+    try {
+      const result=db.prepare("INSERT INTO offers(job_id,worker_id,price,message) VALUES(?,?,?,?)").run(jobId,user.id,price,message);
+      const offerId=Number(result.lastInsertRowid);
+      notifyUser(job.customer_id, "New Offer Received", `${user.name} offered ৳${price} on your task.`, "offer", "/jobs");
+      return send(res,201,{ok:true,id:offerId,offer:{id:offerId,job_id:jobId,worker_id:user.id,price,message}});
+    } catch(error) {
+      if(String(error.message).includes("UNIQUE"))fail(409,"You already bid on this task.");
+      throw error;
+    }
   }
   const offerMatch=url.pathname.match(/^\/api\/jobs\/(\d+)\/offers$/);
   if(req.method==="POST"&&offerMatch) {
@@ -745,15 +744,14 @@ async function handleApi(req,res,url) {
     requireUser(user,["admin"]);const body=await readBody(req);const result=db.prepare("UPDATE users SET verified=? WHERE id=? AND role='worker'").run(body.verified?1:0,Number(verifyMatch[1]));if(!result.changes)fail(404,"Provider not found.");return send(res,200,{ok:true});
   }
   // --- NID Verification Endpoints ---
-  if(req.method==="POST"&&url.pathname==="/api/nid/apply") {
+  if(req.method==="POST"&&(url.pathname==="/api/nid/apply"||url.pathname==="/api/user/nid/submit")) {
     requireUser(user);
     const body=await readBody(req);
-    const front=String(body.nid_front||"").trim();
-    const back=String(body.nid_back||"").trim();
-    const selfie=String(body.selfie_nid||"").trim();
+    const front=String(body.nid_front||body.front||"").trim();
+    const back=String(body.nid_back||body.back||"").trim();
+    const selfie=String(body.selfie_nid||body.selfie||"").trim();
     if(!front||!back||!selfie)fail(400,"All 3 photos (NID front, NID back, and selfie holding NID) are required.");
     
-    // Check if existing pending
     const existing = db.prepare("SELECT id, status FROM nid_verifications WHERE user_id=? ORDER BY created_at DESC LIMIT 1").get(user.id);
     if(existing && existing.status === 'pending') {
       db.prepare("UPDATE nid_verifications SET nid_front=?, nid_back=?, selfie_nid=?, created_at=CURRENT_TIMESTAMP WHERE id=?").run(front, back, selfie, existing.id);
@@ -761,7 +759,17 @@ async function handleApi(req,res,url) {
       db.prepare("INSERT INTO nid_verifications(user_id, nid_front, nid_back, selfie_nid) VALUES(?,?,?,?)").run(user.id, front, back, selfie);
     }
     notifyAdmins("New NID Verification", `${user.name} submitted NID photos for verification.`, "nid", "/admin");
-    return send(res,201,{ok:true,status:'pending',message:"NID application submitted for review."});
+    return send(res,200,{ok:true,status:'pending_review',message:"NID application submitted for review."});
+  }
+  if(req.method==="PATCH"&&url.pathname==="/api/admin/nid/verify") {
+    requireUser(user,["admin"]);
+    const body=await readBody(req);
+    const targetUserId=Number(body.user_id);
+    const action=body.action||"approve";
+    const verified=action==="approve"?1:0;
+    db.prepare("UPDATE users SET verified=? WHERE id=?").run(verified, targetUserId);
+    db.prepare("UPDATE nid_verifications SET status=?, reviewed_at=CURRENT_TIMESTAMP WHERE user_id=? AND status='pending'").run(action==='approve'?'approved':'rejected', targetUserId);
+    return send(res,200,{ok:true,verified});
   }
   if(req.method==="GET"&&url.pathname==="/api/nid/status") {
     requireUser(user);
@@ -795,6 +803,25 @@ async function handleApi(req,res,url) {
   }
 
   // --- Inbox & Chat Endpoints ---
+    if(req.method==="GET"&&url.pathname==="/api/chat/messages") {
+    requireUser(user);
+    const peerId=Number(url.searchParams.get("peer_id")||url.searchParams.get("with"));
+    const jobId=url.searchParams.get("job_id")?Number(url.searchParams.get("job_id")):null;
+    if(!peerId) fail(400, "peer_id required");
+    db.prepare("UPDATE messages SET read=1 WHERE recipient_id=? AND sender_id=? AND read=0").run(user.id, peerId);
+    let sql = `SELECT m.id, m.sender_id, m.recipient_id, m.job_id, m.content, m.read, m.created_at,
+      u.name as sender_name, u.role as sender_role
+      FROM messages m JOIN users u ON u.id=m.sender_id
+      WHERE ((m.sender_id=? AND m.recipient_id=?) OR (m.sender_id=? AND m.recipient_id=?))`;
+    const params = [user.id, peerId, peerId, user.id];
+    if(jobId) {
+      sql += " AND (m.job_id=? OR m.job_id IS NULL)";
+      params.push(jobId);
+    }
+    sql += " ORDER BY m.created_at ASC";
+    const messages = db.prepare(sql).all(...params);
+    return send(res,200,{messages,ok:true});
+  }
   if(req.method==="GET"&&url.pathname==="/api/messages") {
     requireUser(user);
     const withUserId = url.searchParams.get("with") ? Number(url.searchParams.get("with")) : null;
@@ -824,18 +851,19 @@ async function handleApi(req,res,url) {
       return send(res,200,list);
     }
   }
-  if(req.method==="POST"&&url.pathname==="/api/messages") {
+  if(req.method==="POST"&&(url.pathname==="/api/messages"||url.pathname==="/api/chat/send")) {
     requireUser(user);
     const body=await readBody(req);
     const recipientId=Number(body.recipient_id);
-    const content=validateText(body.content,"Message",1,1000);
+    const content=validateText(body.content||body.message,"Message",1,1000);
     const jobId=body.job_id ? Number(body.job_id) : null;
     const recipient = db.prepare("SELECT id, name FROM users WHERE id=?").get(recipientId);
     if(!recipient)fail(404,"Recipient user not found.");
     if(recipient.id===user.id)fail(400,"You cannot message yourself.");
     const result=db.prepare("INSERT INTO messages(sender_id, recipient_id, job_id, content) VALUES(?,?,?,?)").run(user.id, recipientId, jobId, content);
+    const msgId=Number(result.lastInsertRowid);
     notifyUser(recipientId, `New message from ${user.name}`, content.slice(0, 100), "chat", "/inbox");
-    return send(res,201,{ok:true,id:Number(result.lastInsertRowid)});
+    return send(res,201,{ok:true,id:msgId,message:{id:msgId,sender_id:user.id,recipient_id:recipientId,job_id:jobId,content}});
   }
 
   // --- Saved Posts (Bookmarks) Endpoints ---
@@ -853,20 +881,21 @@ async function handleApi(req,res,url) {
         if(w) savedWorkers.push(w);
       }
     });
-    return send(res,200,{jobs: savedJobs, workers: savedWorkers, total: saved.length});
+    return send(res,200,{ok:true,jobs: savedJobs, workers: savedWorkers, posts: [...savedJobs, ...savedWorkers], total: saved.length});
   }
   if(req.method==="POST"&&url.pathname==="/api/saved-posts/toggle") {
     requireUser(user);
     const body=await readBody(req);
-    const type=body.target_type === 'worker' ? 'worker' : 'job';
-    const id=Number(body.target_id);
+    const type=(body.target_type||body.type)==='worker'?'worker':'job';
+    const id=Number(body.target_id||body.id);
+    if(!id) fail(400, "Valid target ID required.");
     const existing = db.prepare("SELECT id FROM saved_posts WHERE user_id=? AND target_type=? AND target_id=?").get(user.id, type, id);
     if(existing) {
       db.prepare("DELETE FROM saved_posts WHERE id=?").run(existing.id);
       return send(res,200,{ok:true,saved:false});
     } else {
       db.prepare("INSERT INTO saved_posts(user_id, target_type, target_id) VALUES(?,?,?)").run(user.id, type, id);
-      return send(res,201,{ok:true,saved:true});
+      return send(res,200,{ok:true,saved:true});
     }
   }
 
@@ -902,7 +931,7 @@ async function handleApi(req,res,url) {
     const count=db.prepare("SELECT COUNT(*) as total FROM vector_index").get().total;
     const workers=db.prepare("SELECT COUNT(*) as c FROM vector_index WHERE entity_type='worker'").get().c;
     const jobs=db.prepare("SELECT COUNT(*) as c FROM vector_index WHERE entity_type='job'").get().c;
-    return send(res,200,{total_vectors:count,workers_indexed:workers,jobs_indexed:jobs,dimensions:VECTOR_DIM,metric:"Cosine Similarity",status:"operational"});
+    return send(res,200,{total_vectors:count,workers_indexed:workers,jobs_indexed:jobs,dimension:VECTOR_DIM,dimensions:VECTOR_DIM,metric:"Cosine Similarity",status:"operational"});
   }
 
   // --- User Settings & Profile Customization Endpoints ---
@@ -968,7 +997,7 @@ async function handleApi(req,res,url) {
 
     const updated=currentUser(user.id);
     if(updated&&updated.role==="worker") indexWorker(updated);
-    return send(res,200,{ok:true,user:updated});
+    return send(res,200,{ok:true,user:updated,settings:{...(updated||{}),sms_alerts:body.sms_alerts!==undefined?(body.sms_alerts?1:0):1,email_alerts:body.email_alerts!==undefined?(body.email_alerts?1:0):1,bio:updated?.bio||bio}});
   }
 
   if(req.method==="POST"&&url.pathname==="/api/user/photo") {

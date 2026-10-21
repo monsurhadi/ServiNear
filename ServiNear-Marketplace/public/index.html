@@ -45,7 +45,7 @@
         <a class="nav-link" href="/" data-route><i data-lucide="home"></i> <span data-i18n="navHome">Home</span></a>
         <a class="nav-link" href="/jobs" data-route><i data-lucide="briefcase"></i> <span data-i18n="navHire">Hire</span></a>
         <a class="nav-link" href="/jobs" data-route><i data-lucide="alert-circle"></i> <span data-i18n="navHelpRequests">Help Requests</span></a>
-        <a class="nav-link" href="/categories" data-route><i data-lucide="store"></i> <span data-i18n="navServices">Dokan Pat</span></a>
+        <a class="nav-link" href="/categories" data-route><i data-lucide="layout-grid"></i> <span data-i18n="navServices">All Categories</span></a>
         <a class="nav-link nav-cta" href="#post" data-open-job><i data-lucide="plus-circle"></i> <span data-i18n="postTaskBtn">Post task</span></a>
       </nav>
 
@@ -103,26 +103,28 @@
         </div>
       </div>
 
-      <form class="searchbar" id="provider-search">
-        <label class="search-field">
-          <i data-lucide="search"></i>
-          <span>
-            <small data-i18n="searchFieldService">What do you need?</small>
-            <input id="service-search" placeholder="Try plumbing, electrical, cleaning or AC repair" data-i18n-placeholder="searchServicePlaceholder">
-          </span>
-        </label>
-        <span class="search-divider"></span>
-        <label class="search-field">
-          <i data-lucide="map-pin"></i>
-          <span>
-            <small data-i18n="searchFieldArea">Where?</small>
-            <input id="area-search" placeholder="Mirpur, Dhanmondi, Uttara or City" data-i18n-placeholder="searchAreaPlaceholder">
-          </span>
-        </label>
-        <button class="button button-location" id="locate-button" type="button" title="Use my current location">
-          <i data-lucide="crosshair"></i><span data-i18n="nearMeBtn">Near me</span>
-        </button>
-      </form>
+      <!-- Dual Track Action Banners (CholoBD Inspired) -->
+      <div class="hero-tracks-grid">
+        <div class="track-card track-card-micro" data-open-job>
+          <div class="track-card-badge"><i data-lucide="zap"></i> <span data-i18n="trackFastTitle">1–8 Hour Tasks</span></div>
+          <h3 data-i18n="trackFastHead">I Need Short-Term Help</h3>
+          <p data-i18n="trackFastDesc">Errands, moving assistance, grocery runs, quick repairs &amp; urgent neighborhood help.</p>
+          <div class="track-card-footer">
+            <span class="track-cta-btn"><span data-i18n="postTaskQuick">Post a Work Alert</span> <i data-lucide="arrow-right"></i></span>
+            <span class="track-pill-tag">OTP Protected</span>
+          </div>
+        </div>
+
+        <a class="track-card track-card-expert" href="/jobs" data-route>
+          <div class="track-card-badge track-badge-expert"><i data-lucide="shield-check"></i> <span data-i18n="trackExpertTitle">Verified Trades</span></div>
+          <h3 data-i18n="trackExpertHead">I Need Verified Experts</h3>
+          <p data-i18n="trackExpertDesc">Certified Electricians, AC Masters, Plumbers, Carpenters &amp; IT Specialists.</p>
+          <div class="track-card-footer">
+            <span class="track-cta-btn"><span data-i18n="browseExperts">Explore Services</span> <i data-lucide="arrow-right"></i></span>
+            <span class="track-pill-tag">NID Checked</span>
+          </div>
+        </a>
+      </div>
 
       <div class="category-heading">
         <div>
@@ -377,7 +379,7 @@
               <li><a href="/jobs" data-route class="profile-nav-item"><i data-lucide="alert-circle" class="icon-red"></i> <span data-i18n="navHelpReq">Help Requests</span></a></li>
               <li><a href="/inbox" data-route class="profile-nav-item"><i data-lucide="message-square" class="icon-teal"></i> <span data-i18n="navInbox">Inbox &amp; Chats</span></a></li>
               <li><a href="/hot-offers" data-route class="profile-nav-item"><i data-lucide="trending-up" class="icon-green"></i> <span data-i18n="navTrending">Trending Posts</span></a></li>
-              <li><a href="/categories" data-route class="profile-nav-item"><i data-lucide="store" class="icon-purple"></i> <span data-i18n="navDokan">Dokan Pat</span></a></li>
+              <li><a href="/categories" data-route class="profile-nav-item"><i data-lucide="layout-grid" class="icon-purple"></i> <span data-i18n="navDokan">All Categories</span></a></li>
               <li><button class="profile-nav-item" data-profile-section="tasks" type="button"><i data-lucide="package" class="icon-orange"></i> <span data-i18n="navMyOrders">My Orders &amp; Work</span></button></li>
               <li><a href="/saved" data-route class="profile-nav-item"><i data-lucide="bookmark" class="icon-green"></i> <span data-i18n="navSavedPosts">Saved Posts</span></a></li>
               <li><button class="profile-nav-item" id="sidebar-verify-btn" type="button"><i data-lucide="shield-check" class="icon-teal"></i> <span data-i18n="navGetVerified">Get Verified (NID)</span></button></li>

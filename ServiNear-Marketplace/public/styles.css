@@ -1600,3 +1600,123 @@
     border: 1.5px solid #ffffff;
   }
 }
+
+/* ==========================================================================
+   CHOLOBD DUAL TRACK ACTION CARDS & REFINED HERO UX
+   ========================================================================== */
+.hero-tracks-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin: 18px 0 28px;
+}
+
+.track-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 22px 24px;
+  border-radius: 10px;
+  background: var(--paper-light);
+  border: 1px solid var(--line);
+  box-shadow: 0 4px 16px rgba(21, 50, 67, 0.05);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  text-decoration: none;
+  position: relative;
+  overflow: hidden;
+}
+
+.track-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(21, 50, 67, 0.1);
+  border-color: var(--amber);
+}
+
+.track-card-micro {
+  border-left: 4px solid var(--rust);
+}
+
+.track-card-expert {
+  border-left: 4px solid var(--teal);
+}
+
+.track-card-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--rust);
+  background: #fdf2ed;
+  padding: 4px 9px;
+  border-radius: 20px;
+  align-self: flex-start;
+  margin-bottom: 12px;
+}
+
+.track-badge-expert {
+  color: var(--teal);
+  background: var(--green-pale);
+}
+
+.track-card h3 {
+  font: 600 20px Fraunces, Georgia, serif;
+  color: var(--ink);
+  margin: 0 0 8px;
+  line-height: 1.25;
+}
+
+.track-card p {
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  line-height: 1.55;
+  margin: 0 0 16px;
+  flex: 1;
+}
+
+.track-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.track-cta-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--teal);
+}
+
+.track-pill-tag {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--muted);
+  background: #ece7db;
+  padding: 3px 8px;
+  border-radius: 12px;
+}
+
+@media (max-width: 768px) {
+  .hero-tracks-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    margin: 14px 0 20px;
+  }
+  .track-card {
+    padding: 16px 18px;
+  }
+  .track-card h3 {
+    font-size: 17px;
+  }
+  .track-card p {
+    font-size: 11px;
+  }
+}

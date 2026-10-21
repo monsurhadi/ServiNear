@@ -211,7 +211,16 @@ const I18N = {
     navHelp: "Help Requests",
     navInbox: "Inbox Chat",
     navTrending: "Trending Posts",
-    navDokan: "Dokan Pat / Services",
+    navServices: "All Categories",
+    navDokan: "All Categories",
+    trackFastTitle: "1–8 Hour Tasks",
+    trackFastHead: "I Need Short-Term Help",
+    trackFastDesc: "Errands, moving assistance, grocery runs, quick repairs & urgent neighborhood help.",
+    postTaskQuick: "Post a Work Alert",
+    trackExpertTitle: "Verified Trades",
+    trackExpertHead: "I Need Verified Experts",
+    trackExpertDesc: "Certified Electricians, AC Masters, Plumbers, Carpenters & IT Specialists.",
+    browseExperts: "Explore Services",
     navOrders: "My Orders & Bids",
     navSaved: "Saved Posts",
     navVerify: "Get Verified",
@@ -279,7 +288,16 @@ const I18N = {
     navHelp: "সাহায্য ও পোস্ট",
     navInbox: "ইনবক্স মেসেজ",
     navTrending: "ট্রেন্ডিং কাজ",
-    navDokan: "দোকান পাট / সার্ভিস",
+    navServices: "সব ক্যাটাগরি",
+    navDokan: "সব ক্যাটাগরি",
+    trackFastTitle: "১–৮ ঘণ্টার কাজ",
+    trackFastHead: "জরুরি ছোটখাটো সাহায্য দরকার",
+    trackFastDesc: "বাজার করা, মালপত্র ওঠানামা, টুকটাক মেরামত বা কাছের কারও তাৎক্ষণিক সহায়তা।",
+    postTaskQuick: "কাজের অ্যালার্ট দিন",
+    trackExpertTitle: "ভেরিফায়েড প্রফেশনাল",
+    trackExpertHead: "অভিজ্ঞ এক্সপার্ট দরকার",
+    trackExpertDesc: "সার্টিফায়েড ইলেকট্রিশিয়ান, এসি টেকনিশিয়ান, প্লাম্বার, কার্পেন্টার ও আইটি এক্সপার্ট।",
+    browseExperts: "সার্ভিস ব্রাউজ করুন",
     navOrders: "আমার অর্ডার ও বিড",
     navSaved: "সংরক্ষিত পোস্ট",
     navVerify: "এনআইডি ভেরিফাই",
@@ -498,8 +516,8 @@ function haversine(a, b) {
 }
 
 function filteredProviders() {
-  const query = $("#service-search")?.value.trim().toLowerCase() || "";
-  const area = $("#area-search")?.value.trim().toLowerCase() || "";
+  const query = ($("#global-search-input")?.value || $("#service-search")?.value || "").trim().toLowerCase();
+  const area = $("#area-search")?.value?.trim().toLowerCase() || "";
   const verified = $("#verified-filter")?.checked || false;
   const sort = $("#sort-filter")?.value || "recommended";
 
@@ -2018,7 +2036,9 @@ function bindEvents() {
     }
     const category = event.target.closest("[data-category]");
     if (category) {
-      $("#service-search").value = category.dataset.category;
+      const catName = category.dataset.category;
+      if ($("#service-search")) $("#service-search").value = catName;
+      if ($("#global-search-input")) $("#global-search-input").value = catName;
       state.page = "discover";
       history.pushState({}, "", "/");
       setActivePage();
@@ -2268,10 +2288,11 @@ function bindEvents() {
     state.providerLimit = 24;
     renderProviders();
   });
-  ["#service-search", "#area-search", "#verified-filter", "#sort-filter"].forEach((sel) => {
+  ["#global-search-input", "#service-search", "#area-search", "#verified-filter", "#sort-filter"].forEach((sel) => {
     $(sel)?.addEventListener("input", () => {
       state.providerLimit = 24;
       renderProviders();
+      if (sel === "#global-search-input") renderTasks();
     });
   });
   ["#task-search", "#task-category-filter", "#task-sort"].forEach((sel) => {
