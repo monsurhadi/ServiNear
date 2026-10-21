@@ -2,12 +2,13 @@
   "name": "servinear-marketplace",
   "version": "2.0.0",
   "private": true,
-  "description": "Local services marketplace starter with location search, job offers, and SQLite persistence.",
+  "description": "Local services marketplace with AI chatbot, WebSockets, and escrow system.",
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=22.0.0"
   },
   "scripts": {
     "start": "node server.js",
+    "dev": "node server.js",
     "build:vercel": "node scripts/build-vercel.js"
   },
   "dependencies": {

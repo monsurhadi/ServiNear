@@ -1267,7 +1267,7 @@ const server=http.createServer(async(req,res)=>{
   }
 });
 
-server.listen(PORT,()=>console.log(`ServiNear is ready at http://localhost:${PORT}`));
+server.listen(PORT, "0.0.0.0", () => console.log(`ServiNear is ready at http://0.0.0.0:${PORT}`));
 
 
 // ============================================================================
