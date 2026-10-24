@@ -6,6 +6,8 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
 const { WebSocketServer } = require("ws");
+const { verifyGoogleIdToken } = require("./lib/google-auth");
+const limiter = require("./lib/ratelimit");
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
@@ -17,7 +19,9 @@ const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || "";
 if (process.env.NODE_ENV === "production" && WEB_ORIGIN && !WEB_ORIGIN.startsWith("https://")) {
   throw new Error("Production requires HTTPS WEB_ORIGIN.");
 }
-const sessions = new Map();
+const IS_PROD = process.env.NODE_ENV === "production";
+const TRUST_PROXY = process.env.TRUST_PROXY === "1" || Boolean(process.env.RENDER);
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
 const CATEGORIES = [
   ["Cleaning", "Home, office and deep cleaning"], ["Electrical", "Wiring, switches, fans and repairs"],
   ["Plumbing", "Leaks, taps, fittings and water lines"], ["Appliances", "Home appliance repair and maintenance"],
@@ -40,6 +44,29 @@ const CATEGORIES = [
 fs.mkdirSync(DATA_DIR, { recursive: true });
 const db = new DatabaseSync(path.join(DATA_DIR, "servinear.sqlite"));
 db.exec("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;");
+db.exec(`
+  CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    ip TEXT,
+    user_agent TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+  CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY,
+    actor_id INTEGER,
+    actor_name TEXT,
+    action TEXT NOT NULL,
+    entity TEXT,
+    entity_id TEXT,
+    detail TEXT,
+    ip TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
+`);
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY,
@@ -196,6 +223,9 @@ ensureColumn("users", "gender", "TEXT");
 ensureColumn("users", "city", "TEXT");
 ensureColumn("users", "occupation", "TEXT");
 ensureColumn("users", "google_id", "TEXT");
+ensureColumn("users", "status", "TEXT NOT NULL DEFAULT 'active'");
+ensureColumn("users", "last_login_at", "TEXT");
+ensureColumn("users", "avatar_url", "TEXT");
 ensureColumn("users", "reset_token", "TEXT");
 ensureColumn("users", "reset_expires", "INTEGER");
 ensureColumn("users", "username", "TEXT");
@@ -374,6 +404,19 @@ function passwordHash(password, salt = crypto.randomBytes(16).toString("hex")) {
   return `${salt}:${crypto.scryptSync(password, salt, 64).toString("hex")}`;
 }
 
+const scryptAsync = (pw, salt) => new Promise((resolve, reject) =>
+  crypto.scrypt(pw, salt, 64, (err, key) => (err ? reject(err) : resolve(key))));
+async function passwordHashAsync(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  return `${salt}:${(await scryptAsync(password, salt)).toString("hex")}`;
+}
+async function checkPasswordAsync(password, saved) {
+  const [salt, expected] = String(saved || "").split(":");
+  if (!salt || !expected) return false;
+  const actual = await scryptAsync(password, salt);
+  const target = Buffer.from(expected, "hex");
+  return actual.length === target.length && crypto.timingSafeEqual(actual, target);
+}
 function checkPassword(password, saved) {
   const [salt, expected] = String(saved || "").split(":");
   if (!salt || !expected) return false;
@@ -468,7 +511,39 @@ function seedDatabase() {
   if (nazmul) addOffer.run(3, nazmul.id, 2000, "Experienced in non-destructive acoustic pipe leak detection and sanitary fittings replacement.");
   if (rashed) addOffer.run(4, rashed.id, 7000, "Includes 14ft covered truck, 4 skilled lifters, bubble wrap, and safe delivery.");
 }
-seedDatabase();
+const SEED_DEMO = process.env.SEED_DEMO_DATA === "true" || !IS_PROD;
+if (SEED_DEMO) {
+  seedDatabase();
+} else {
+  const addCat = db.prepare("INSERT OR IGNORE INTO categories(name,description) VALUES(?,?)");
+  CATEGORIES.forEach(([n, d]) => addCat.run(n, d));
+}
+function ensureEnvAdmin() {
+  const email = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase();
+  const pw = String(process.env.ADMIN_PASSWORD || "");
+  if (IS_PROD) {
+    // Never leave the publicly documented demo administrator usable in production.
+    const legacy = db.prepare("SELECT id,password_hash FROM users WHERE email='admin@servinear.local'").get();
+    if (legacy && checkPassword("ServiNear123!", legacy.password_hash) && email !== "admin@servinear.local") {
+      db.prepare("UPDATE users SET status='suspended' WHERE id=?").run(legacy.id);
+      db.prepare("DELETE FROM sessions WHERE user_id=?").run(legacy.id);
+      console.warn("Security: suspended the default demo admin account (admin@servinear.local).");
+    }
+  }
+  if (!email || !pw) {
+    if (IS_PROD && !db.prepare("SELECT 1 FROM users WHERE role='admin' AND status='active'").get())
+      console.warn("No active admin exists. Set ADMIN_EMAIL and ADMIN_PASSWORD (14+ chars) and restart.");
+    return;
+  }
+  if (pw.length < 14) { console.warn("ADMIN_PASSWORD must be at least 14 characters; admin not created."); return; }
+  const existing = db.prepare("SELECT id FROM users WHERE email=?").get(email);
+  if (!existing) {
+    db.prepare("INSERT INTO users(name,email,password_hash,role,verified,area) VALUES(?,?,?,?,1,'Dhaka')")
+      .run("Platform Admin", email, passwordHash(pw), "admin");
+    console.log("Created admin account for " + email);
+  }
+}
+ensureEnvAdmin();
 initVectorDatabase();
 
 function send(res,status,payload,headers={}) {
@@ -484,6 +559,7 @@ function currentUser(id) {
   const u = db.prepare("SELECT * FROM users WHERE id=?").get(id);
   if (!u) return null;
   delete u.password_hash;
+  delete u.google_id;
   delete u.reset_token;
   delete u.reset_expires;
   try { u.skills = JSON.parse(u.skills || "[]"); } catch { u.skills = []; }
@@ -501,12 +577,22 @@ function notifyAdmins(title, message, type = "admin", link = null) {
     admins.forEach(a => notifyUser(a.id, title, message, type, link));
   } catch(e) { console.error("Admin notification error:", e); }
 }
+const hashToken = (t) => crypto.createHash("sha256").update(String(t)).digest("hex");
+function userIdForToken(token) {
+  if (!token) return null;
+  const h = hashToken(token);
+  const row = db.prepare("SELECT user_id, expires_at FROM sessions WHERE token_hash=?").get(h);
+  if (!row) return null;
+  if (row.expires_at < Date.now()) { db.prepare("DELETE FROM sessions WHERE token_hash=?").run(h); return null; }
+  return row.user_id;
+}
 function getSession(req) {
-  const token=parseCookies(req.headers.cookie).servinear_session;
-  const session=token?sessions.get(token):null;
-  if(!session||session.expiresAt<Date.now()){if(token)sessions.delete(token);return null;}
-  session.expiresAt=Date.now()+SESSION_TTL*1000;
-  return currentUser(session.user.id);
+  const token = parseCookies(req.headers.cookie).servinear_session;
+  const userId = userIdForToken(token);
+  if (!userId) return null;
+  db.prepare("UPDATE sessions SET expires_at=? WHERE token_hash=?").run(Date.now() + SESSION_TTL * 1000, hashToken(token));
+  const u = currentUser(userId);
+  return u && u.status !== "suspended" ? u : null;
 }
 function ensureWallet(userId) {
   db.prepare("INSERT OR IGNORE INTO wallets(user_id, balance, locked_escrow) VALUES(?,0,0)").run(userId);
@@ -598,7 +684,7 @@ function coordinates(body) {
 function publicWorkers() {
   const workers = db.prepare(`SELECT u.id,u.name,u.username,u.avatar_photo,u.profession_icon,u.skills,u.area,u.city,u.category,u.bio,u.rate,u.experience,u.latitude,u.longitude,u.verified,u.availability,
     ROUND(AVG(r.rating),1) AS rating,COUNT(r.id) AS reviews FROM users u LEFT JOIN reviews r ON r.worker_id=u.id
-    WHERE u.role='worker' GROUP BY u.id ORDER BY u.verified DESC,u.name`).all();
+    WHERE u.role='worker' AND u.status='active' GROUP BY u.id ORDER BY u.verified DESC,u.name`).all();
   return workers.map((w) => {
     try { w.skills = JSON.parse(w.skills || "[]"); } catch { w.skills = []; }
     return w;
@@ -631,9 +717,12 @@ function sessionCookie(token, maxAge = SESSION_TTL) {
   const domain = COOKIE_DOMAIN ? `; Domain=${COOKIE_DOMAIN}` : "";
   return `servinear_session=${token}; HttpOnly; SameSite=${sameSite}; Path=/; Max-Age=${maxAge}${domain}${secure}`;
 }
+let ctxIp = null, ctxUa = null;
 function setSession(userId) {
   const token=crypto.randomBytes(32).toString("hex");
-  sessions.set(token,{user:{id:userId},expiresAt:Date.now()+SESSION_TTL*1000});
+  db.prepare("INSERT INTO sessions(token_hash,user_id,expires_at,created_at,ip,user_agent) VALUES(?,?,?,?,?,?)")
+    .run(hashToken(token), userId, Date.now() + SESSION_TTL * 1000, Date.now(), ctxIp || null, String(ctxUa || "").slice(0, 200));
+  db.prepare("UPDATE users SET last_login_at=CURRENT_TIMESTAMP WHERE id=?").run(userId);
   return sessionCookie(token, SESSION_TTL);
 }
 function validateText(value,label,min,max) {
@@ -643,8 +732,11 @@ function validateText(value,label,min,max) {
 }
 function categoryExists(category) { return Boolean(db.prepare("SELECT id FROM categories WHERE name=? COLLATE NOCASE").get(category)); }
 
+const { createAdminApi } = require("./lib/admin");
+const adminApi = createAdminApi({ db, send, fail, requireUser, readBody, notifyUser });
 async function handleApi(req,res,url) {
   const user=getSession(req);
+  if (url.pathname.startsWith("/api/admin/") && (await adminApi(req,res,url,user,ctxIp)) !== false) return;
   if(req.method==="GET"&&url.pathname==="/api/health")return send(res,200,{ok:true,database:"connected",app:"ServiNear"});
   if(req.method==="GET"&&url.pathname==="/api/bootstrap") {
     const data=publicJobs(user);
@@ -662,12 +754,15 @@ async function handleApi(req,res,url) {
   }
   if(req.method==="POST"&&url.pathname==="/api/auth/login") {
     const body=await readBody(req);const email=String(body.email||"").trim().toLowerCase();
-    const record=db.prepare("SELECT id,password_hash FROM users WHERE email=?").get(email);
-    if(!record||!checkPassword(String(body.password||""),record.password_hash))fail(401,"Email or password is incorrect.");
+    const lim=limiter.hit("login:"+ctxIp+":"+email,8,15*60*1000);
+    if(!lim.allowed){res.setHeader("Retry-After",lim.retryAfter);fail(429,"Too many sign-in attempts. Please wait a few minutes and try again.");}
+    const record=db.prepare("SELECT id,password_hash,status FROM users WHERE email=?").get(email);
+    if(!record||!(await checkPasswordAsync(String(body.password||""),record.password_hash)))fail(401,"Email or password is incorrect.");
+    if(record.status==="suspended")fail(403,"This account has been suspended. Please contact support.");
     return send(res,200,{user:currentUser(record.id)},{"Set-Cookie":setSession(record.id)});
   }
   if(req.method==="POST"&&url.pathname==="/api/auth/logout") {
-    const token=parseCookies(req.headers.cookie).servinear_session;if(token)sessions.delete(token);
+    const token=parseCookies(req.headers.cookie).servinear_session;if(token)db.prepare("DELETE FROM sessions WHERE token_hash=?").run(hashToken(token));
     return send(res,200,{ok:true},{"Set-Cookie":sessionCookie("", 0)});
   }
   if(req.method==="POST"&&url.pathname==="/api/auth/register") {
@@ -693,31 +788,36 @@ async function handleApi(req,res,url) {
     const position=role==="worker"?coordinates(body):{lat:null,lng:null};
     try {
       const result=db.prepare(`INSERT INTO users(name,first_name,surname,email,password_hash,role,gender,city,occupation,phone,area,address,category,bio,rate,latitude,longitude)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(name,firstName||null,surname||null,email,passwordHash(password),role,gender,city,occupation,phone,area,address,category,bio,rate,position.lat,position.lng);
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(name,firstName||null,surname||null,email,await passwordHashAsync(password),role,gender,city,occupation,phone,area,address,category,bio,rate,position.lat,position.lng);
       const id=Number(result.lastInsertRowid);
       notifyUser(id, "Welcome to ServiNear!", "Your account is created. Explore local verified helpers and post your first task.", "system");
       return send(res,201,{user:currentUser(id)},{"Set-Cookie":setSession(id)});
     } catch(error) {if(String(error.message).includes("UNIQUE"))fail(409,"An account with that email already exists.");throw error;}
   }
+  if(req.method==="GET"&&url.pathname==="/api/config") {
+    return send(res,200,{googleClientId:GOOGLE_CLIENT_ID||null,googleEnabled:Boolean(GOOGLE_CLIENT_ID)||(!IS_PROD&&process.env.GOOGLE_AUTH_MOCK==="1")});
+  }
   if(req.method==="POST"&&url.pathname==="/api/auth/google") {
+    const lim=limiter.hit("google:"+ctxIp,20,15*60*1000);
+    if(!lim.allowed){res.setHeader("Retry-After",lim.retryAfter);fail(429,"Too many attempts. Please try again shortly.");}
     const body=await readBody(req);
-    const email=String(body.email||"").trim().toLowerCase();
-    const name=String(body.name||"Google User").trim().slice(0,80);
-    const googleId=String(body.google_id||body.sub||"google_"+Date.now());
-    if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail(400,"A valid Google email is required.");
-    let userRecord = db.prepare("SELECT id FROM users WHERE email=?").get(email);
-    if(userRecord) {
-      db.prepare("UPDATE users SET google_id=? WHERE id=?").run(googleId, userRecord.id);
-      return send(res,200,{user:currentUser(userRecord.id)},{"Set-Cookie":setSession(userRecord.id)});
-    } else {
-      const role=body.role==="worker"?"worker":"customer";
-      const dummyPassword = crypto.randomBytes(16).toString("hex");
-      const result=db.prepare(`INSERT INTO users(name,email,password_hash,google_id,role,area,availability)
-        VALUES(?,?,?,?,?,'Dhaka','Available')`).run(name,email,passwordHash(dummyPassword),googleId,role);
-      const id=Number(result.lastInsertRowid);
-      notifyUser(id, "Welcome via Google!", "Your account has been connected with Google.", "system");
-      return send(res,201,{user:currentUser(id)},{"Set-Cookie":setSession(id)});
+    let g;
+    try { g=await verifyGoogleIdToken(body.credential,GOOGLE_CLIENT_ID); }
+    catch(error){ if(error.status)throw error; console.error("Google verify error:",error.message); fail(401,"Google could not verify this sign-in."); }
+    let rec=db.prepare("SELECT id,role,status FROM users WHERE google_id=?").get(g.sub)||db.prepare("SELECT id,role,status FROM users WHERE email=?").get(g.email);
+    if(rec){
+      if(rec.status==="suspended")fail(403,"This account has been suspended. Please contact support.");
+      if(rec.role==="admin"&&process.env.GOOGLE_ALLOW_ADMIN!=="1")fail(403,"Administrators must sign in with their password.");
+      db.prepare("UPDATE users SET google_id=?, avatar_url=COALESCE(avatar_url,?) WHERE id=?").run(g.sub,g.picture,rec.id);
+      return send(res,200,{user:currentUser(rec.id)},{"Set-Cookie":setSession(rec.id)});
     }
+    const role=body.role==="worker"?"worker":"customer";
+    const dummy=await passwordHashAsync(crypto.randomBytes(24).toString("hex"));
+    const result=db.prepare(`INSERT INTO users(name,email,password_hash,google_id,avatar_url,role,area,availability)
+      VALUES(?,?,?,?,?,?,'Dhaka','Available')`).run(String(g.name).slice(0,80),g.email,dummy,g.sub,g.picture,role);
+    const id=Number(result.lastInsertRowid);
+    notifyUser(id,"Welcome to ServiNear!","Your account is connected with Google.","system");
+    return send(res,201,{user:currentUser(id)},{"Set-Cookie":setSession(id)});
   }
   if(req.method==="POST"&&url.pathname==="/api/auth/forgot-password") {
     const body=await readBody(req);
@@ -743,7 +843,7 @@ async function handleApi(req,res,url) {
     if(!userRecord||userRecord.reset_token!==code||!userRecord.reset_expires||userRecord.reset_expires<Date.now()) {
       fail(400,"Invalid or expired password reset code.");
     }
-    db.prepare("UPDATE users SET password_hash=?, reset_token=NULL, reset_expires=NULL WHERE id=?").run(passwordHash(newPassword), userRecord.id);
+    db.prepare("UPDATE users SET password_hash=?, reset_token=NULL, reset_expires=NULL WHERE id=?").run(await passwordHashAsync(newPassword), userRecord.id);
     notifyUser(userRecord.id, "Password Changed", "Your account password was successfully reset.", "security");
     return send(res,200,{ok:true,message:"Password updated successfully. You can now log in."});
   }
@@ -1235,7 +1335,10 @@ async function handleApi(req,res,url) {
 function contentType(file) { return ({".html":"text/html; charset=utf-8",".css":"text/css; charset=utf-8",".js":"text/javascript; charset=utf-8",".png":"image/png",".jpg":"image/jpeg",".svg":"image/svg+xml",".webp":"image/webp"})[path.extname(file)]||"application/octet-stream"; }
 const server=http.createServer(async(req,res)=>{
   const url=new URL(req.url,`http://${req.headers.host||"localhost"}`);
-  const headers={"X-Content-Type-Options":"nosniff","Referrer-Policy":"strict-origin-when-cross-origin","Permissions-Policy":"geolocation=(self)","Content-Security-Policy":"default-src 'self'; script-src 'self' https://unpkg.com; style-src 'self' https://unpkg.com https://fonts.googleapis.com 'unsafe-inline'; img-src 'self' data: https://tile.openstreetmap.org https://*.tile.openstreetmap.org; connect-src 'self'; font-src 'self' data: https://fonts.gstatic.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"};
+  ctxIp=limiter.clientIp(req,TRUST_PROXY);ctxUa=req.headers["user-agent"];
+  const headers={"X-Content-Type-Options":"nosniff","Referrer-Policy":"strict-origin-when-cross-origin","Permissions-Policy":"geolocation=(self)","Content-Security-Policy":"default-src 'self'; script-src 'self' https://accounts.google.com https://unpkg.com; style-src 'self' https://unpkg.com https://fonts.googleapis.com https://accounts.google.com 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org https://tile.openstreetmap.org https://*.googleusercontent.com; connect-src 'self' https://router.project-osrm.org https://nominatim.openstreetmap.org https://accounts.google.com ws: wss:; frame-src https://accounts.google.com; font-src 'self' data: https://fonts.gstatic.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"};
+  if(IS_PROD)headers["Strict-Transport-Security"]="max-age=31536000; includeSubDomains";
+  headers["Cross-Origin-Opener-Policy"]="same-origin-allow-popups";
   Object.entries(headers).forEach(([key,value])=>res.setHeader(key,value));
   try {
     if(url.pathname.startsWith("/api/")) {
@@ -1248,10 +1351,12 @@ const server=http.createServer(async(req,res)=>{
         res.setHeader("Vary","Origin");
       }
       if(req.method==="OPTIONS") {
-        res.setHeader("Access-Control-Allow-Methods","GET,POST,PATCH,OPTIONS");
+        res.setHeader("Access-Control-Allow-Methods","GET,POST,PATCH,PUT,DELETE,OPTIONS");
         res.setHeader("Access-Control-Allow-Headers","Content-Type,ngrok-skip-browser-warning");
         res.writeHead(204);return res.end();
       }
+      const gl=limiter.hit("api:"+ctxIp,600,60*1000);
+      if(!gl.allowed){res.setHeader("Retry-After",gl.retryAfter);fail(429,"Too many requests. Please slow down.");}
       return await handleApi(req,res,url);
     }
     if(!["GET","HEAD"].includes(req.method))return send(res,405,{message:"Method not allowed."});
@@ -1279,8 +1384,8 @@ const connectedClients = new Map();
 wss.on("connection", (ws, req) => {
   const cookies = parseCookies(req.headers.cookie);
   const token = cookies.servinear_session;
-  const session = token ? sessions.get(token) : null;
-  const user = session ? currentUser(session.user.id) : null;
+  const wsUserId = userIdForToken(token);
+  const user = wsUserId ? currentUser(wsUserId) : null;
 
   if (user) {
     ws.userId = user.id;
