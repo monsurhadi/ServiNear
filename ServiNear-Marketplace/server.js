@@ -795,7 +795,7 @@ async function handleApi(req,res,url) {
     } catch(error) {if(String(error.message).includes("UNIQUE"))fail(409,"An account with that email already exists.");throw error;}
   }
   if(req.method==="GET"&&url.pathname==="/api/config") {
-    return send(res,200,{googleClientId:GOOGLE_CLIENT_ID||null,googleEnabled:Boolean(GOOGLE_CLIENT_ID)||(!IS_PROD&&process.env.GOOGLE_AUTH_MOCK==="1")});
+    return send(res,200,{googleClientId:GOOGLE_CLIENT_ID||null,googleEnabled:Boolean(GOOGLE_CLIENT_ID)||(!IS_PROD&&process.env.GOOGLE_AUTH_MOCK==="1"),demo:SEED_DEMO});
   }
   if(req.method==="POST"&&url.pathname==="/api/auth/google") {
     const lim=limiter.hit("google:"+ctxIp,20,15*60*1000);

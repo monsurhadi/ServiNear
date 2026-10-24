@@ -516,7 +516,7 @@ function haversine(a, b) {
 }
 
 function filteredProviders() {
-  const query = ($("#global-search-input")?.value || $("#service-search")?.value || "").trim().toLowerCase();
+  const query = ($("#service-search")?.value || $("#global-search-input")?.value || "").trim().toLowerCase();
   const area = $("#area-search")?.value?.trim().toLowerCase() || "";
   const verified = $("#verified-filter")?.checked || false;
   const sort = $("#sort-filter")?.value || "recommended";
@@ -604,25 +604,7 @@ function renderProviders() {
 }
 
 function renderMap(rows = filteredProviders()) {
-  if (!window.L || !$("#service-map")) return;
-  if (!state.map) {
-    state.map = L.map("service-map", { scrollWheelZoom: false }).setView(
-      state.position ? [state.position.latitude, state.position.longitude] : [23.78, 90.39],
-      10
-    );
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19,
-      attribution: "© OpenStreetMap"
-    }).addTo(state.map);
-    state.markers = L.layerGroup().addTo(state.map);
-  }
-  state.markers.clearLayers();
-  rows.filter((w) => w.latitude && w.longitude).slice(0, 150).forEach((w) => {
-    L.marker([w.latitude, w.longitude])
-      .bindPopup(`<strong>${escapeHtml(w.name)}</strong><br>${escapeHtml(w.category)} · ${escapeHtml(w.area)}`)
-      .addTo(state.markers);
-  });
-  setTimeout(() => state.map?.invalidateSize(), 100);
+  window.ServiMap?.render(rows);
 }
 
 function jobCard(job, active = false) {
@@ -1798,23 +1780,7 @@ function updateAuthMode() {
   $("#login-form")?.classList.toggle("hidden", isRegister);
 }
 
-async function simulateGoogleAuth() {
-  const email = prompt("Enter your Google Account email for one-click sign in:", "user@gmail.com");
-  if (!email) return;
-  try {
-    const res = await post("/api/auth/google", {
-      email,
-      name: email.split("@")[0].replace(/[._]/g, " "),
-      google_id: `g_${Date.now()}`
-    });
-    state.user = res.user;
-    $("#auth-dialog")?.close();
-    await reload();
-    toast(`Signed in with Google as ${state.user.name}!`);
-  } catch (error) {
-    toast(error.message);
-  }
-}
+// Google sign-in is handled by finder.js (Google Identity Services + server-side token verification).
 
 function openJobDialog() {
   if (!state.user) return openAuth("login");
@@ -1933,7 +1899,7 @@ function bindEvents() {
 
     // Google Auth buttons
     if (event.target.closest("#google-signup-btn") || event.target.closest("#google-login-btn")) {
-      return simulateGoogleAuth();
+      return; // finder.js handles Google sign-in
     }
 
     // Forgot Password link
@@ -2317,10 +2283,10 @@ function bindEvents() {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         state.position = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
-        $("#area-search").value = "";
-        $("#sort-filter").value = "distance";
+        if ($("#area-search")) $("#area-search").value = "";
+        if ($("#sort-filter")) $("#sort-filter").value = "distance";
         renderProviders();
-        state.map?.setView([state.position.latitude, state.position.longitude], 12);
+        window.ServiMap?.fit();
         toast("Nearby results are sorted by distance.");
       },
       () => toast("Location permission was not granted."),
@@ -2328,12 +2294,7 @@ function bindEvents() {
     );
   });
 
-  $("#map-recenter")?.addEventListener("click", () => {
-    state.map?.setView(
-      state.position ? [state.position.latitude, state.position.longitude] : [23.78, 90.39],
-      state.position ? 12 : 10
-    );
-  });
+  $("#map-recenter")?.addEventListener("click", () => window.ServiMap?.fit());
 
   // Profile workspace clicks & form submits
   $("#profile-workspace")?.addEventListener("click", (event) => {

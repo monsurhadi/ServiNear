@@ -6,8 +6,11 @@
   <meta name="theme-color" content="#0e6b5c">
   <meta name="description" content="Find nearby local service professionals, post a task, chat directly and compare offers.">
   <title>ServiNear | Bangladesh's Local Services Community</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="/vendor/markercluster/MarkerCluster.css">
+  <link rel="stylesheet" href="/vendor/markercluster/MarkerCluster.Default.css">
   <link rel="stylesheet" href="/styles.css?v=9">
+  <link rel="stylesheet" href="/finder.css?v=4">
 </head>
 <body>
   <header class="site-header">
@@ -103,6 +106,54 @@
         </div>
       </div>
 
+      <!-- Finder: search + live map in one highlighted card -->
+      <section class="finder" id="finder" aria-label="Find a professional near you">
+        <div class="finder-panel">
+          <form class="finder-search" id="finder-form" role="search">
+            <h2 class="finder-title" data-i18n="finderTitle">Find a pro <em>near you</em></h2>
+            <label class="finder-field"><i data-lucide="search"></i><span><small data-i18n="finderService">Service</small><input id="service-search" type="search" placeholder="AC repair, electrician, plumber…" autocomplete="off"></span></label>
+            <label class="finder-field"><i data-lucide="map-pin"></i><span><small data-i18n="finderArea">Area</small><input id="area-search" type="search" placeholder="Dhanmondi, Mirpur, Uttara…" autocomplete="off"></span></label>
+            <div class="finder-actions">
+              <button class="button button-teal" type="submit"><i data-lucide="search"></i> <span data-i18n="finderSearch">Search</span></button>
+              <button class="button button-outline" type="button" id="locate-button"><i data-lucide="locate-fixed"></i> <span data-i18n="nearMeBtn">Near me</span></button>
+            </div>
+            <div class="finder-chips" id="finder-chips" aria-label="Popular services"></div>
+          </form>
+          <div class="finder-list-wrap">
+            <div class="finder-bar">
+              <strong id="finder-count" aria-live="polite">Loading professionals…</strong>
+              <label class="toggle-control"><input id="bounds-toggle" type="checkbox"><span class="toggle-track"></span><span>Only in map view</span></label>
+            </div>
+            <div class="finder-results" id="finder-results"></div>
+          </div>
+        </div>
+        <div class="finder-map-wrap">
+          <div id="service-map" role="application" aria-label="Map of service providers"></div>
+          <div class="map-controls">
+            <button class="map-btn" type="button" id="map-fit"><i data-lucide="maximize"></i><span>Show all</span></button>
+            <button class="map-btn" type="button" id="map-recenter"><i data-lucide="crosshair"></i><span>Reset view</span></button>
+          </div>
+          <aside class="route-panel hidden" id="route-panel" aria-label="Directions">
+            <div class="route-head">
+              <div><small>Directions to</small><strong id="route-dest"></strong></div>
+              <button class="route-close" type="button" id="route-close" aria-label="Close directions"><i data-lucide="x"></i></button>
+            </div>
+            <form class="route-form" id="route-form">
+              <label class="route-input"><i data-lucide="circle-dot"></i><input id="route-from" placeholder="Your starting point (address or area)" autocomplete="off"></label>
+              <div class="route-tools">
+                <button type="button" id="route-locate">My location</button>
+                <button type="button" id="route-pick">Pin on map</button>
+                <button type="submit" class="go">Get route</button>
+              </div>
+            </form>
+            <div id="route-summary"></div>
+            <ol id="route-steps"></ol>
+            <p class="route-msg" id="route-msg" role="status"></p>
+          </aside>
+          <span class="map-attrib-note">GPS is only used when you tap “Near me” or “My location”.</span>
+        </div>
+      </section>
+
       <!-- Dual Track Action Banners (CholoBD Inspired) -->
       <div class="hero-tracks-grid">
         <div class="track-card track-card-micro" data-open-job>
@@ -165,18 +216,7 @@
         </div>
       </section>
 
-      <section class="map-section">
-        <div class="map-section-head">
-          <div>
-            <p class="eyebrow" data-i18n="mapEyebrow">LOCATION VIEW</p>
-            <h2 data-i18n="mapTitle">Explore on the map</h2>
-            <p id="map-caption" data-i18n="mapSub">Providers with a saved service area across Bangladesh.</p>
-          </div>
-          <button class="button button-quiet" id="map-recenter"><i data-lucide="locate-fixed"></i> <span data-i18n="showResultsBtn">Show results</span></button>
-        </div>
-        <div id="service-map"></div>
-        <small class="map-attribution">Map data © OpenStreetMap contributors. GPS runs only after choosing “Near me”.</small>
-      </section>
+
     </section>
 
     <!-- Categories View -->
@@ -1111,9 +1151,11 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <script src="/vendor/leaflet/leaflet.js"></script>
+  <script src="/vendor/markercluster/leaflet.markercluster.js"></script>
+  <script src="/vendor/lucide.min.js"></script>
   <script src="/runtime-config.js?v=3"></script>
-  <script src="/app.js?v=11"></script>
+  <script src="/app.js?v=12"></script>
+  <script src="/finder.js?v=4"></script>
 </body>
 </html>
