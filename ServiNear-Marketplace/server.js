@@ -571,6 +571,10 @@ function notifyUser(userId, title, message, type = "system", link = null) {
     sendToUser(userId, { type: "notification", notification: { title, message, type, link, created_at: new Date().toISOString() } });
   } catch(e) { console.error("Notification error:", e); }
 }
+function auditLog(admin, action, entity, entityId, detail) {
+  try { db.prepare("INSERT INTO audit_log(actor_id,actor_name,action,entity,entity_id,detail,ip) VALUES(?,?,?,?,?,?,?)")
+    .run(admin.id, admin.name, action, entity, String(entityId ?? ""), detail ? JSON.stringify(detail) : null, ctxIp || null); } catch (e) { console.error("audit error", e.message); }
+}
 function notifyAdmins(title, message, type = "admin", link = null) {
   try {
     const admins = db.prepare("SELECT id FROM users WHERE role='admin'").all();
@@ -969,7 +973,7 @@ async function handleApi(req,res,url) {
   const ticketMatch=url.pathname.match(/^\/api\/admin\/support\/(\d+)$/);
   if(req.method==="PATCH"&&ticketMatch) {
     requireUser(user,["admin"]);const body=await readBody(req);if(!["open","reviewing","resolved"].includes(body.status))fail(400,"Choose a valid support status.");
-    const result=db.prepare("UPDATE support_tickets SET status=? WHERE id=?").run(body.status,Number(ticketMatch[1]));if(!result.changes)fail(404,"Support request not found.");return send(res,200,{ok:true});
+    const result=db.prepare("UPDATE support_tickets SET status=? WHERE id=?").run(body.status,Number(ticketMatch[1]));if(!result.changes)fail(404,"Support request not found.");auditLog(user,"ticket.status","ticket",ticketMatch[1],{status:body.status});return send(res,200,{ok:true});
   }
   const verifyMatch=url.pathname.match(/^\/api\/admin\/workers\/(\d+)\/verify$/);
   if(req.method==="PATCH"&&verifyMatch) {
@@ -1001,6 +1005,8 @@ async function handleApi(req,res,url) {
     const verified=action==="approve"?1:0;
     db.prepare("UPDATE users SET verified=? WHERE id=?").run(verified, targetUserId);
     db.prepare("UPDATE nid_verifications SET status=?, reviewed_at=CURRENT_TIMESTAMP WHERE user_id=? AND status='pending'").run(action==='approve'?'approved':'rejected', targetUserId);
+    auditLog(user,"nid."+(action==='approve'?'approve':'reject'),"user",targetUserId);
+    if(verified)notifyUser(targetUserId,"You are verified","Your NID verification was approved. The verified badge now shows on your profile.","system");
     return send(res,200,{ok:true,verified});
   }
   if(req.method==="GET"&&url.pathname==="/api/nid/status") {
@@ -1336,7 +1342,7 @@ function contentType(file) { return ({".html":"text/html; charset=utf-8",".css":
 const server=http.createServer(async(req,res)=>{
   const url=new URL(req.url,`http://${req.headers.host||"localhost"}`);
   ctxIp=limiter.clientIp(req,TRUST_PROXY);ctxUa=req.headers["user-agent"];
-  const headers={"X-Content-Type-Options":"nosniff","Referrer-Policy":"strict-origin-when-cross-origin","Permissions-Policy":"geolocation=(self)","Content-Security-Policy":"default-src 'self'; script-src 'self' https://accounts.google.com https://unpkg.com; style-src 'self' https://unpkg.com https://fonts.googleapis.com https://accounts.google.com 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org https://tile.openstreetmap.org https://*.googleusercontent.com; connect-src 'self' https://router.project-osrm.org https://nominatim.openstreetmap.org https://accounts.google.com ws: wss:; frame-src https://accounts.google.com; font-src 'self' data: https://fonts.gstatic.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"};
+  const headers={"X-Content-Type-Options":"nosniff","Referrer-Policy":"strict-origin-when-cross-origin","Permissions-Policy":"geolocation=(self)","Content-Security-Policy":"default-src 'self'; script-src 'self' https://accounts.google.com; style-src 'self' https://fonts.googleapis.com https://accounts.google.com 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org https://tile.openstreetmap.org https://*.googleusercontent.com; connect-src 'self' https://router.project-osrm.org https://nominatim.openstreetmap.org https://accounts.google.com ws: wss:; frame-src https://accounts.google.com; font-src 'self' data: https://fonts.gstatic.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"};
   if(IS_PROD)headers["Strict-Transport-Security"]="max-age=31536000; includeSubDomains";
   headers["Cross-Origin-Opener-Policy"]="same-origin-allow-popups";
   Object.entries(headers).forEach(([key,value])=>res.setHeader(key,value));
@@ -1362,7 +1368,8 @@ const server=http.createServer(async(req,res)=>{
     if(!["GET","HEAD"].includes(req.method))return send(res,405,{message:"Method not allowed."});
     const decoded=decodeURIComponent(url.pathname==="/"?"/index.html":url.pathname);const file=path.resolve(PUBLIC_DIR,`.${decoded}`);
     if(!file.startsWith(PUBLIC_DIR+path.sep)&&file!==path.join(PUBLIC_DIR,"index.html"))return send(res,403,{message:"Forbidden."});
-    const appRoute=/^\/(categories|jobs|hot-offers|about|how-it-works|help|profile|admin|tasks\/\d+)\/?$/.test(url.pathname);
+    if(/^\/admin\/?$/.test(url.pathname)){res.writeHead(200,{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-cache"});return res.end(fs.readFileSync(path.join(PUBLIC_DIR,"admin.html")));}
+    const appRoute=/^\/(categories|jobs|hot-offers|about|how-it-works|help|profile|tasks\/\d+)\/?$/.test(url.pathname);
     const actual=fs.existsSync(file)&&fs.statSync(file).isFile()?file:appRoute?path.join(PUBLIC_DIR,"index.html"):null;
     if(!actual)return send(res,404,{message:"Not found."});
     res.writeHead(200,{"Content-Type":contentType(actual),"Cache-Control":actual.endsWith(".html")?"no-cache":"public, max-age=3600"});

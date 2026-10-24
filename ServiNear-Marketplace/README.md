@@ -50,8 +50,16 @@ npm start
 
 Then open `http://localhost:5050`.
 
-## Demo accounts
+## Production setup
 
+1. Copy `.env.example` to `.env` (or set the same variables in your host) and fill in the values.
+2. **Administrator:** set `ADMIN_EMAIL` and `ADMIN_PASSWORD` (14+ characters). The account is created on first boot. In production the old demo admin (`admin@servinear.local`) is suspended automatically.
+3. **Google sign-in:** create an OAuth *Web application* client in Google Cloud Console, add your site origin under *Authorized JavaScript origins*, and set `GOOGLE_CLIENT_ID`. The server verifies every Google ID token (signature, audience, expiry, verified email); admins sign in with a password only.
+4. **Demo data** is loaded only outside production, or when `SEED_DEMO_DATA=true`. Demo accounts share the password `ServiNear123!`, so never enable them alongside real customers.
+5. Open `/admin` while signed in as an administrator for the control dashboard (users, tasks, verification, payments, reviews, support, categories, audit log, CSV export).
+6. Run `npm test` for the end-to-end smoke tests (also executed by CI).
+
+## Demo accounts (development only)
 All fixed and generated demo accounts use password `ServiNear123!`.
 
 | Role | Email |

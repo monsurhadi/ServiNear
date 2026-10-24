@@ -2013,7 +2013,7 @@ function bindEvents() {
       return;
     }
     if (event.target.closest("[data-view-jobs]")) return navigate("/jobs");
-    if (event.target.closest("[data-go-admin]")) return navigate("/admin");
+    if (event.target.closest("[data-go-admin]")) { window.location.href = "/admin"; return; }
 
     const task = event.target.closest("[data-task-id]");
     if (task) {

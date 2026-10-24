@@ -1,0 +1,27 @@
+name: CI
+on:
+  push:
+    branches: [main, production-upgrade]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ServiNear-Marketplace
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ServiNear-Marketplace/package-lock.json
+      - run: npm ci
+      - name: Syntax check
+        run: |
+          node --check server.js
+          for f in lib/*.js public/*.js; do node --check "$f"; done
+      - name: Smoke tests
+        run: npm test
+      - name: Static build
+        run: SERVINEAR_API_BASE=https://api.example.com npm run build:vercel

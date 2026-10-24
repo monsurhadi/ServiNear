@@ -15,3 +15,17 @@ services:
         value: "22"
       - key: PORT
         value: "10000"
+      - key: TRUST_PROXY
+        value: "1"
+      # DATA_DIR: on a paid plan, attach a persistent disk and set DATA_DIR to its mount path
+      # (for example /var/data). On the free plan the disk is ephemeral and data resets on redeploy.
+      - key: ADMIN_EMAIL
+        sync: false                 # set in the Render dashboard
+      - key: ADMIN_PASSWORD
+        sync: false                 # 14+ characters; set in the Render dashboard
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: WEB_ORIGIN
+        sync: false                 # e.g. https://app.example.com
+      - key: COOKIE_DOMAIN
+        sync: false                 # e.g. .example.com

@@ -5,6 +5,10 @@
   "outputDirectory": "ServiNear-Marketplace/dist",
   "rewrites": [
     {
+      "source": "/admin",
+      "destination": "/admin.html"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

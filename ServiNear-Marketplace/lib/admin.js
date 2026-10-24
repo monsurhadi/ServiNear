@@ -2,7 +2,10 @@
 // Admin control-plane API. Every route requires an authenticated admin and every write is audited.
 
 function createAdminApi({ db, send, fail, requireUser, readBody, notifyUser }) {
-  const num = (v, d, min, max) => Math.max(min, Math.min(max, Number.isFinite(Number(v)) ? Number(v) : d));
+  const num = (v, d, min, max) => {
+    const n = v === null || v === undefined || String(v).trim() === "" ? NaN : Number(v);
+    return Math.max(min, Math.min(max, Number.isFinite(n) ? Math.floor(n) : d));
+  };
   const like = (q) => `%${String(q || "").trim().replace(/[%_]/g, "")}%`;
   const count = (sql, ...args) => db.prepare(sql).get(...args).c;
 
@@ -152,6 +155,9 @@ function createAdminApi({ db, send, fail, requireUser, readBody, notifyUser }) {
       });
     }
 
+    if (p === "/api/admin/categories" && m === "GET") {
+      return send(res, 200, db.prepare("SELECT c.id,c.name,c.description,(SELECT COUNT(*) FROM jobs j WHERE j.category=c.name) AS tasks FROM categories c ORDER BY c.id").all());
+    }
     if (p === "/api/admin/categories" && m === "POST") {
       const b = await readBody(req);
       const name = String(b.name || "").trim().slice(0, 60), desc = String(b.description || "").trim().slice(0, 160);

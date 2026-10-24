@@ -4,12 +4,13 @@
   "private": true,
   "description": "Local services marketplace with AI chatbot, WebSockets, and escrow system.",
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.5"
   },
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "build:vercel": "node scripts/build-vercel.js"
+    "build:vercel": "node scripts/build-vercel.js",
+    "test": "node scripts/smoke-test.js"
   },
   "dependencies": {
     "ws": "^8.22.0"
