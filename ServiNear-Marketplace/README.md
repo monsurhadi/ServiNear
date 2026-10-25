@@ -59,6 +59,20 @@ Then open `http://localhost:5050`.
 5. Open `/admin` while signed in as an administrator for the control dashboard (users, tasks, verification, payments, reviews, support, categories, audit log, CSV export).
 6. Run `npm test` for the end-to-end smoke tests (also executed by CI).
 
+### Payments, phone verification and search (new)
+
+| Feature | How it works | Turn it on |
+| --- | --- | --- |
+| **Wallet top-up** | Customers pay through SSLCOMMERZ (bKash, Nagad, Rocket, cards). Every payment is confirmed server-to-server with the gateway before the wallet is credited, exactly once. Risky payments are held for admin review. | `PAYMENT_PROVIDER=sslcommerz`, `SSLCOMMERZ_STORE_ID`, `SSLCOMMERZ_STORE_PASSWORD`, `PUBLIC_API_URL` |
+| **Funded escrow** | Accepting an offer moves the price from the customer's wallet into escrow. If the wallet is short, the app asks for exactly the shortfall and finishes the acceptance after payment. | automatic |
+| **Payouts** | Providers request a withdrawal to their *verified* bKash/Nagad/Rocket number. Admins send the money and record the reference in `/admin` > Payments; declined payouts return to the wallet. | automatic |
+| **Phone OTP** | 6-digit single-use codes, hashed, expiring in 5 minutes, 5 attempts, resend cooldown, per-user/phone/IP limits. One verified account per number. | `SMS_PROVIDER` (+ provider keys) |
+| **Semantic search** | Providers and tasks are embedded by a real model, ranked together with keywords, verified status, rating and distance. Falls back to keyword search if the provider is down. | `EMBEDDING_BASE_URL`, `EMBEDDING_MODEL`, `EMBEDDING_API_KEY` |
+
+Development uses a mock gateway and a console SMS provider (the OTP is printed in the server log and returned as `dev_code`). Both are refused when `NODE_ENV=production`. `npm test` runs three suites (core, money/phone, search).
+
+**Business decisions you still need to make:** who pays the gateway fee (currently ServiNear absorbs it, so a ৳1,000 top-up credits ৳1,000), your platform commission on completed tasks (currently none), and refund policy for disputes (admins decide per case in `/admin`).
+
 ## Demo accounts (development only)
 All fixed and generated demo accounts use password `ServiNear123!`.
 

@@ -17,6 +17,10 @@
   const compass = (b) => ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"][Math.round(b / 45) % 8];
   const hasPos = (w) => Number.isFinite(Number(w.latitude)) && Number.isFinite(Number(w.longitude)) && w.latitude && w.longitude;
   const ratingText = (w) => (Number(w.reviews) > 0 ? `★ ${Number(w.rating).toFixed(1)} (${w.reviews})` : "New");
+  const matchBadge = (w) => {
+    const r = state.vectorResults?.get(w.id);
+    return r && r.semantic >= 0.35 ? `<span class="fr-match" title="Semantic match to your search">${r.match_pct} match</span>` : "";
+  };
   const money = (n) => (typeof window.money === "function" ? window.money(n) : `৳${Number(n || 0).toLocaleString()}`);
 
   function stepText(s) {
@@ -111,7 +115,9 @@
     if (boundsOnly && map) { const b = map.getBounds(); list = rows.filter((w) => hasPos(w) && b.contains([w.latitude, w.longitude])); }
     if (count) count.textContent = `${list.length.toLocaleString()} professional${list.length === 1 ? "" : "s"}${boundsOnly ? " in view" : ""}`;
     if (!list.length) {
-      box.innerHTML = `<div class="finder-empty"><strong>No providers found</strong><span>Try another service, clear the area, or zoom the map out.</span></div>`;
+      box.innerHTML = state.vectorPending
+        ? `<div class="finder-empty"><strong>Searching…</strong><span>Finding the best matches for you.</span></div>`
+        : `<div class="finder-empty"><strong>No providers found</strong><span>Try another service, clear the area, or zoom the map out.</span></div>`;
       return;
     }
     box.innerHTML = list.slice(0, 40).map((w) => {
@@ -121,7 +127,7 @@
         <div class="fr-main">
           <div class="fr-name"><strong>${esc(w.name)}</strong>${w.verified ? '<i data-lucide="badge-check"></i>' : ""}</div>
           <div class="fr-sub">${esc(w.category || "")} · ${esc(w.area || "")}</div>
-          <div class="fr-meta"><span>${ratingText(w)}</span><span>${money(w.rate)}</span>${d ? `<span>${d}</span>` : ""}</div>
+          <div class="fr-meta">${matchBadge(w)}<span>${ratingText(w)}</span><span>${money(w.rate)}</span>${d ? `<span>${d}</span>` : ""}</div>
         </div>
         ${hasPos(w) ? `<button type="button" class="fr-dir" data-dir-id="${w.id}" aria-label="Directions to ${esc(w.name)}"><i data-lucide="navigation"></i></button>` : ""}
       </article>`;

@@ -141,3 +141,4 @@
 }
 
 body.route-open #ai-chat-trigger{opacity:0;pointer-events:none}
+.fr-match{color:var(--teal);background:#e1efe8;padding:1px 7px;border-radius:99px;font-size:10px}

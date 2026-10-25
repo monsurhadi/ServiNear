@@ -10,7 +10,7 @@
     "start": "node server.js",
     "dev": "node server.js",
     "build:vercel": "node scripts/build-vercel.js",
-    "test": "node scripts/smoke-test.js"
+    "test": "node scripts/smoke-test.js && node scripts/money-test.js && node scripts/search-test.js"
   },
   "dependencies": {
     "ws": "^8.22.0"

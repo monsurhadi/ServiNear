@@ -8,6 +8,11 @@ const { DatabaseSync } = require("node:sqlite");
 const { WebSocketServer } = require("ws");
 const { verifyGoogleIdToken } = require("./lib/google-auth");
 const limiter = require("./lib/ratelimit");
+const { createEmbedder } = require("./lib/embeddings");
+const { createVectorService } = require("./lib/vector");
+const { createSmsSender, normalizeBdPhone } = require("./lib/sms");
+const { createOtpService } = require("./lib/otp");
+const { createGateway } = require("./lib/payments");
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
@@ -66,6 +71,38 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
   CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
+  CREATE TABLE IF NOT EXISTS payments (
+    id INTEGER PRIMARY KEY,
+    tran_id TEXT NOT NULL UNIQUE,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    amount INTEGER NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'BDT',
+    offer_id INTEGER,
+    provider TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','paid','failed','cancelled','review','rejected')),
+    gateway_session TEXT,
+    val_id TEXT,
+    bank_tran_id TEXT,
+    method TEXT,
+    risk_level INTEGER,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    paid_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_payments_user ON payments(user_id, created_at DESC);
+  CREATE TABLE IF NOT EXISTS payouts (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    amount INTEGER NOT NULL,
+    method TEXT NOT NULL,
+    account TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','paid','rejected')),
+    reference TEXT,
+    admin_note TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    processed_at TEXT,
+    processed_by INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS idx_payouts_status ON payouts(status, created_at);
 `);
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
@@ -226,6 +263,21 @@ ensureColumn("users", "google_id", "TEXT");
 ensureColumn("users", "status", "TEXT NOT NULL DEFAULT 'active'");
 ensureColumn("users", "last_login_at", "TEXT");
 ensureColumn("users", "avatar_url", "TEXT");
+const sms = createSmsSender();
+const otp = createOtpService({ db, sms, fail });
+// Default: required in production, but only once an SMS provider exists (otherwise nobody could ever verify).
+const REQUIRE_PHONE = process.env.REQUIRE_PHONE_VERIFIED ? process.env.REQUIRE_PHONE_VERIFIED === "1" : IS_PROD && sms.configured;
+function requirePhone(user, force = false) {
+  if ((REQUIRE_PHONE || force) && !user.phone_verified) fail(403, "Verify your mobile number to continue.", { code: "phone_verification_required" });
+}
+const gateway = createGateway();
+const MIN_TOPUP = Number(process.env.MIN_TOPUP_BDT || 50), MAX_TOPUP = Number(process.env.MAX_TOPUP_BDT || 100000);
+function publicApiUrl(req) {
+  const env = String(process.env.PUBLIC_API_URL || process.env.RENDER_EXTERNAL_URL || "").replace(/\/$/, "");
+  if (env) return env;
+  if (IS_PROD) fail(503, "Payments are not configured (PUBLIC_API_URL).");
+  return `http://${req.headers.host}`;
+}
 ensureColumn("users", "reset_token", "TEXT");
 ensureColumn("users", "reset_expires", "INTEGER");
 ensureColumn("users", "username", "TEXT");
@@ -328,76 +380,15 @@ function generateEmbedding(text) {
   return vec;
 }
 
-function cosineSimilarity(vecA, vecB) {
-  let dot = 0;
-  for (let i = 0; i < VECTOR_DIM; i++) dot += vecA[i] * vecB[i];
-  return dot;
-}
-
-const upsertVectorStmt = db.prepare(`
-  INSERT INTO vector_index(entity_type, entity_id, title, category, area, content, vector, updated_at)
-  VALUES(?,?,?,?,?,?,?, CURRENT_TIMESTAMP)
-  ON CONFLICT(entity_type, entity_id) DO UPDATE SET
-    title=excluded.title,
-    category=excluded.category,
-    area=excluded.area,
-    content=excluded.content,
-    vector=excluded.vector,
-    updated_at=CURRENT_TIMESTAMP
-`);
-
-function indexWorker(worker) {
-  if (!worker) return;
-  const content = `${worker.name} ${worker.category || ""} ${worker.area || ""} ${worker.bio || ""} ${worker.occupation || ""} ${worker.skills || ""}`;
-  const vec = generateEmbedding(content);
-  upsertVectorStmt.run("worker", worker.id, worker.name, worker.category || "General", worker.area || "", content, JSON.stringify(Array.from(vec)));
-}
-
-function indexJob(job) {
-  if (!job) return;
-  const content = `${job.title} ${job.category || ""} ${job.area || ""} ${job.details || ""}`;
-  const vec = generateEmbedding(content);
-  upsertVectorStmt.run("job", job.id, job.title, job.category || "General", job.area || "", content, JSON.stringify(Array.from(vec)));
-}
-
+const embedder = createEmbedder();
+const vectors = createVectorService({ db, embedder, hashEmbed: generateEmbedding });
+function indexWorker(worker) { if (worker) vectors.upsert("worker", worker); }
+function indexJob(job) { if (job) vectors.upsert("job", job); }
 function initVectorDatabase() {
-  const existingCount = db.prepare("SELECT COUNT(*) AS c FROM vector_index").get().c;
-  if (existingCount > 0) return;
-  const workers = db.prepare("SELECT * FROM users WHERE role='worker'").all();
-  workers.forEach(indexWorker);
-  const jobs = db.prepare("SELECT * FROM jobs").all();
-  jobs.forEach(indexJob);
-}
-
-function vectorSearch(query, entityType = "all", limit = 20) {
-  const queryVec = generateEmbedding(query);
-  let sql = "SELECT * FROM vector_index";
-  if (entityType === "workers" || entityType === "worker") sql += " WHERE entity_type='worker'";
-  else if (entityType === "jobs" || entityType === "job") sql += " WHERE entity_type='job'";
-  const rows = db.prepare(sql).all();
-
-  const scored = [];
-  for (const row of rows) {
-    try {
-      const vec = JSON.parse(row.vector);
-      const score = cosineSimilarity(queryVec, vec);
-      if (score > 0.05) {
-        scored.push({
-          entity_type: row.entity_type,
-          entity_id: row.entity_id,
-          title: row.title,
-          category: row.category,
-          area: row.area,
-          content: row.content,
-          score: Math.round(score * 100) / 100,
-          match_pct: Math.min(100, Math.round(score * 120)) + "%"
-        });
-      }
-    } catch {}
-  }
-
-  scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, limit);
+  db.prepare("SELECT * FROM users WHERE role='worker'").all().forEach(indexWorker);
+  db.prepare("SELECT * FROM jobs").all().forEach(indexJob);
+  const changed = vectors.backfill();
+  console.log(`Search index ready (${embedder.enabled ? "semantic: " + embedder.id : "built-in vectors"}), ${vectors.size()} items, ${changed} queued for (re)embedding.`);
 }
 
 function passwordHash(password, salt = crypto.randomBytes(16).toString("hex")) {
@@ -551,7 +542,7 @@ function send(res,status,payload,headers={}) {
   res.writeHead(status,{"Content-Type":"application/json; charset=utf-8","Content-Length":body.length,"Cache-Control":"no-store",...headers});
   res.end(body);
 }
-function fail(status,message) { const error=new Error(message); error.status=status; throw error; }
+function fail(status,message,extra) { const error=new Error(message); error.status=status; if(extra)error.extra=extra; throw error; }
 function parseCookies(header="") {
   return Object.fromEntries(header.split(";").map((part)=>{const i=part.indexOf("=");return i<0?["",""]:[part.slice(0,i).trim(),decodeURIComponent(part.slice(i+1).trim())];}));
 }
@@ -679,6 +670,14 @@ function readBody(req) {
     req.on("error",reject);
   });
 }
+function readForm(req) {
+  return new Promise((resolve,reject)=>{
+    let data="";
+    req.on("data",chunk=>{data+=chunk;if(data.length>200000){reject(Object.assign(new Error("That request is too large."),{status:413}));req.destroy();}});
+    req.on("end",()=>{try{resolve(Object.fromEntries(new URLSearchParams(data)));}catch{resolve({});}});
+    req.on("error",reject);
+  });
+}
 function coordinates(body) {
   const lat=body.latitude===undefined||body.latitude===null?null:Number(body.latitude);
   const lng=body.longitude===undefined||body.longitude===null?null:Number(body.longitude);
@@ -736,8 +735,39 @@ function validateText(value,label,min,max) {
 }
 function categoryExists(category) { return Boolean(db.prepare("SELECT id FROM categories WHERE name=? COLLATE NOCASE").get(category)); }
 
+// Confirms a payment server-to-server and credits the wallet exactly once.
+async function settlePayment(tranId,kind,form) {
+  const row=db.prepare("SELECT * FROM payments WHERE tran_id=?").get(tranId);
+  if(!row) return {status:"failed"};
+  if(row.status==="paid"||row.status==="review") return {status:row.status==="paid"?"success":"review",offer_id:row.offer_id};
+  if(kind==="cancel"){db.prepare("UPDATE payments SET status='cancelled' WHERE tran_id=? AND status='pending'").run(tranId);return {status:"cancelled"};}
+  if(kind==="fail"){db.prepare("UPDATE payments SET status='failed' WHERE tran_id=? AND status='pending'").run(tranId);return {status:"failed"};}
+  // success / ipn: never trust the posted fields; ask the gateway.
+  const valId=String(form.val_id||"");
+  if(!valId) return {status:"failed"};
+  let v;
+  try { v=await gateway.validate({valId,tranId,amount:row.amount}); }
+  catch(e){ console.error("Payment validation error:",e.message); return {status:"pending",offer_id:row.offer_id}; } // IPN/retry can still settle it
+  if(!v.valid){ db.prepare("UPDATE payments SET status='failed' WHERE tran_id=? AND status='pending'").run(tranId); return {status:"failed"}; }
+  const risky=v.riskLevel===1;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const moved=db.prepare("UPDATE payments SET status=?,val_id=?,bank_tran_id=?,method=?,risk_level=?,paid_at=CURRENT_TIMESTAMP WHERE tran_id=? AND status='pending'")
+      .run(risky?"review":"paid",valId,v.bankTranId,v.method,v.riskLevel,tranId).changes;
+    if(moved&&!risky){
+      ensureWallet(row.user_id);
+      db.prepare("UPDATE wallets SET balance=balance+? WHERE user_id=?").run(row.amount,row.user_id);
+      db.prepare("INSERT INTO transactions(user_id,type,amount,payment_method,trx_id,details) VALUES(?,?,?,?,?,?)")
+        .run(row.user_id,"deposit",row.amount,v.method||gateway.provider,v.bankTranId||tranId,`Wallet top-up (${tranId})`);
+    }
+    db.exec("COMMIT");
+    if(moved&&!risky) notifyUser(row.user_id,"Payment received",`৳${row.amount} was added to your ServiNear wallet.`,"wallet","/profile");
+    if(moved&&risky) notifyAdmins?.("Payment held for review",`Payment ${tranId} (৳${row.amount}) was flagged risky by the gateway.`,"wallet","/admin");
+  } catch(e){ db.exec("ROLLBACK"); throw e; }
+  return {status:risky?"review":"success",offer_id:row.offer_id};
+}
 const { createAdminApi } = require("./lib/admin");
-const adminApi = createAdminApi({ db, send, fail, requireUser, readBody, notifyUser });
+const adminApi = createAdminApi({ db, send, fail, requireUser, readBody, notifyUser, vectors, ensureWallet });
 async function handleApi(req,res,url) {
   const user=getSession(req);
   if (url.pathname.startsWith("/api/admin/") && (await adminApi(req,res,url,user,ctxIp)) !== false) return;
@@ -795,11 +825,12 @@ async function handleApi(req,res,url) {
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(name,firstName||null,surname||null,email,await passwordHashAsync(password),role,gender,city,occupation,phone,area,address,category,bio,rate,position.lat,position.lng);
       const id=Number(result.lastInsertRowid);
       notifyUser(id, "Welcome to ServiNear!", "Your account is created. Explore local verified helpers and post your first task.", "system");
+      if(role==="worker")indexWorker(db.prepare("SELECT * FROM users WHERE id=?").get(id));
       return send(res,201,{user:currentUser(id)},{"Set-Cookie":setSession(id)});
     } catch(error) {if(String(error.message).includes("UNIQUE"))fail(409,"An account with that email already exists.");throw error;}
   }
   if(req.method==="GET"&&url.pathname==="/api/config") {
-    return send(res,200,{googleClientId:GOOGLE_CLIENT_ID||null,googleEnabled:Boolean(GOOGLE_CLIENT_ID)||(!IS_PROD&&process.env.GOOGLE_AUTH_MOCK==="1"),demo:SEED_DEMO});
+    return send(res,200,{googleClientId:GOOGLE_CLIENT_ID||null,googleEnabled:Boolean(GOOGLE_CLIENT_ID)||(!IS_PROD&&process.env.GOOGLE_AUTH_MOCK==="1"),demo:SEED_DEMO,phoneVerification:sms.configured,requirePhone:REQUIRE_PHONE,payments:gateway.enabled?gateway.provider:null,minTopup:MIN_TOPUP,maxTopup:MAX_TOPUP});
   }
   if(req.method==="POST"&&url.pathname==="/api/auth/google") {
     const lim=limiter.hit("google:"+ctxIp,20,15*60*1000);
@@ -821,6 +852,7 @@ async function handleApi(req,res,url) {
       VALUES(?,?,?,?,?,?,'Dhaka','Available')`).run(String(g.name).slice(0,80),g.email,dummy,g.sub,g.picture,role);
     const id=Number(result.lastInsertRowid);
     notifyUser(id,"Welcome to ServiNear!","Your account is connected with Google.","system");
+    if(role==="worker")indexWorker(db.prepare("SELECT * FROM users WHERE id=?").get(id));
     return send(res,201,{user:currentUser(id)},{"Set-Cookie":setSession(id)});
   }
   if(req.method==="POST"&&url.pathname==="/api/auth/forgot-password") {
@@ -856,7 +888,7 @@ async function handleApi(req,res,url) {
     const category=user.role==="worker"?validateText(body.category,"Service category",2,60):user.category;
     const bio=user.role==="worker"?String(body.bio||"").trim().slice(0,500):user.bio;
     const rate=user.role==="worker"?Math.max(1,Math.min(1000000,Number(body.rate)||500)):user.rate;
-    db.prepare("UPDATE users SET name=?,phone=?,area=?,address=?,category=?,bio=?,rate=? WHERE id=?").run(name,phone,area,address,category,bio,rate,user.id);
+    db.prepare("UPDATE users SET name=?,phone=?,area=?,address=?,category=?,bio=?,rate=? WHERE id=?").run(name,phone,area,address,category,bio,rate,user.id);otp.resetIfChanged(user.id,phone);
     return send(res,200,{user:currentUser(user.id)});
   }
   if(req.method==="GET"&&url.pathname==="/api/jobs") {
@@ -875,6 +907,7 @@ async function handleApi(req,res,url) {
   }
     if(req.method==="POST"&&url.pathname==="/api/offers") {
     requireUser(user,["worker"]);
+    requirePhone(user);
     const body=await readBody(req);
     const jobId=Number(body.job_id);
     const price=Number(body.price);
@@ -896,7 +929,7 @@ async function handleApi(req,res,url) {
   const offerMatch=url.pathname.match(/^\/api\/jobs\/(\d+)\/offers$/);
   if(req.method==="POST"&&offerMatch) {
     requireUser(user,["worker"]);if(!user.verified)fail(403,"Your provider profile needs verification before you can bid.");
-    const jobId=Number(offerMatch[1]);const body=await readBody(req);const price=Number(body.price);const message=validateText(body.message,"Offer message",10,500);
+    requirePhone(user);const jobId=Number(offerMatch[1]);const body=await readBody(req);const price=Number(body.price);const message=validateText(body.message,"Offer message",10,500);
     if(!Number.isInteger(price)||price<1||price>10000000)fail(400,"Enter your offer in whole taka.");
     const job=db.prepare("SELECT id,status,customer_id FROM jobs WHERE id=?").get(jobId);if(!job||job.status!=="open")fail(409,"This task is no longer accepting bids.");if(job.customer_id===user.id)fail(403,"You cannot bid on your own task.");
     try {
@@ -909,12 +942,13 @@ async function handleApi(req,res,url) {
   const acceptMatch=url.pathname.match(/^\/api\/offers\/(\d+)\/accept$/);
   if(req.method==="POST"&&acceptMatch) {
     requireUser(user,["customer"]);
+    requirePhone(user);
     const offerId=Number(acceptMatch[1]);
     const offer=db.prepare(`SELECT o.id,o.job_id,o.worker_id,o.price FROM offers o JOIN jobs j ON j.id=o.job_id
       WHERE o.id=? AND j.customer_id=? AND j.status='open' AND o.status='pending'`).get(offerId,user.id);
     if(!offer)fail(404,"That bid is no longer available.");
 
-    const releaseOtp = Math.floor(100000 + Math.random() * 900000).toString();
+    const releaseOtp = String(crypto.randomInt(100000, 1000000));
 
     db.exec("BEGIN IMMEDIATE");
     try {
@@ -930,13 +964,20 @@ async function handleApi(req,res,url) {
           offer_id=excluded.offer_id, worker_id=excluded.worker_id, amount=excluded.amount, release_otp=excluded.release_otp, status='held'`)
         .run(offer.job_id, offer.id, user.id, offer.worker_id, offer.price, releaseOtp);
 
-      db.prepare("UPDATE wallets SET locked_escrow=locked_escrow+? WHERE user_id=?").run(offer.price, user.id);
-      db.prepare("INSERT INTO transactions(user_id, type, amount, payment_method, details) VALUES(?,?,?,'bKash Escrow',?)")
+      // The customer must actually hold the money: move it from spendable balance into escrow atomically.
+      const hold = db.prepare("UPDATE wallets SET balance=balance-?, locked_escrow=locked_escrow+? WHERE user_id=? AND balance>=?").run(offer.price, offer.price, user.id, offer.price);
+      if (!hold.changes) throw new Error("INSUFFICIENT_FUNDS");
+      db.prepare("INSERT INTO transactions(user_id, type, amount, payment_method, details) VALUES(?,?,?,'Wallet Escrow',?)")
         .run(user.id, "escrow_hold", offer.price, `Escrow locked for Task #${offer.job_id}`);
 
       db.exec("COMMIT");
     } catch(error) {
       db.exec("ROLLBACK");
+      if (error.message === "INSUFFICIENT_FUNDS") {
+        if (!gateway.enabled) fail(503, "Online payments are not enabled yet, so this offer cannot be funded. Please try again soon.", { code: "payments_unavailable" });
+        const bal = db.prepare("SELECT balance FROM wallets WHERE user_id=?").get(user.id)?.balance || 0;
+        fail(402, `Add ৳${offer.price - bal} to your wallet to secure this task in escrow.`, { code: "insufficient_funds", shortfall: offer.price - bal, balance: bal, price: offer.price, offer_id: offerId });
+      }
       throw error;
     }
 
@@ -1159,18 +1200,20 @@ async function handleApi(req,res,url) {
 
   // --- Vector Database Search & Stats Endpoints ---
   if(req.method==="GET"&&url.pathname==="/api/vector/search") {
-    const q=url.searchParams.get("q")||"";
+    const vl=limiter.hit("vsearch:"+ctxIp,40,60*1000);
+    if(!vl.allowed){res.setHeader("Retry-After",vl.retryAfter);fail(429,"Too many searches. Please slow down.");}
+    const q=String(url.searchParams.get("q")||"").trim().slice(0,200);
     const type=url.searchParams.get("type")||"all";
     const limit=Math.min(100,Math.max(1,Number(url.searchParams.get("limit")||20)));
+    const lat=url.searchParams.has("lat")?Number(url.searchParams.get("lat")):null;
+    const lng=url.searchParams.has("lng")?Number(url.searchParams.get("lng")):null;
     const start=Date.now();
-    const results=vectorSearch(q,type,limit);
-    return send(res,200,{query:q,total:results.length,took_ms:Date.now()-start,dimensions:VECTOR_DIM,engine:"ServiNear Neural Vector Core (Cosine 128-dim)",results});
+    const found=await vectors.search({query:q,type,limit,lat,lng,category:url.searchParams.get("category")||null});
+    return send(res,200,{query:q,total:found.results.length,took_ms:Date.now()-start,engine:found.engine,results:found.results});
   }
   if(req.method==="GET"&&url.pathname==="/api/vector/stats") {
-    const count=db.prepare("SELECT COUNT(*) as total FROM vector_index").get().total;
-    const workers=db.prepare("SELECT COUNT(*) as c FROM vector_index WHERE entity_type='worker'").get().c;
-    const jobs=db.prepare("SELECT COUNT(*) as c FROM vector_index WHERE entity_type='job'").get().c;
-    return send(res,200,{total_vectors:count,workers_indexed:workers,jobs_indexed:jobs,dimension:VECTOR_DIM,dimensions:VECTOR_DIM,metric:"Cosine Similarity",status:"operational"});
+    requireUser(user,["admin"]);
+    return send(res,200,{...vectors.stats(),metric:"cosine (L2-normalised dot product)",status:"operational"});
   }
 
   // --- User Settings & Profile Customization Endpoints ---
@@ -1194,8 +1237,11 @@ async function handleApi(req,res,url) {
     const otp = String(body.otp||"").trim();
     const escrow = db.prepare("SELECT * FROM escrows WHERE job_id=? AND status='held'").get(jobId);
     if(!escrow) fail(404,"Active escrow record not found for this task.");
-
-    if(escrow.release_otp !== otp) {
+    if(user.id!==escrow.worker_id&&user.id!==escrow.customer_id) fail(403,"Only the customer or the provider on this task can release its escrow.");
+    const rl=limiter.hit("release:"+escrow.id,5,30*60*1000);
+    if(!rl.allowed){res.setHeader("Retry-After",rl.retryAfter);fail(429,"Too many wrong codes. Try again in "+Math.ceil(rl.retryAfter/60)+" minutes, or contact support.");}
+    const okOtp=otp.length===escrow.release_otp.length&&crypto.timingSafeEqual(Buffer.from(otp),Buffer.from(escrow.release_otp));
+    if(!okOtp) {
       fail(400,"Invalid 6-digit release OTP. Please ask the client for the correct completion OTP.");
     }
 
@@ -1221,6 +1267,77 @@ async function handleApi(req,res,url) {
   }
 
   // --- Wallet & Transactions Endpoints ---
+  // --- Phone verification (OTP) ---
+  if(req.method==="POST"&&url.pathname==="/api/phone/request") {
+    requireUser(user);
+    const body=await readBody(req);
+    return send(res,200,await otp.request(user,body.phone,ctxIp));
+  }
+  if(req.method==="POST"&&url.pathname==="/api/phone/verify") {
+    requireUser(user);
+    const body=await readBody(req);
+    const result=otp.verify(user,body.code);
+    notifyUser(user.id,"Mobile number verified","Your number is now verified. Thanks for helping keep ServiNear safe.","system");
+    return send(res,200,{...result,user:currentUser(user.id)});
+  }
+
+  // --- Payments: wallet top-up through the gateway ---
+  if(req.method==="POST"&&url.pathname==="/api/payments/create") {
+    requireUser(user);
+    requirePhone(user);
+    if(!gateway.enabled) fail(503,"Online payments are not available right now.");
+    const pl=limiter.hit("pay:"+user.id,10,3600*1000);
+    if(!pl.allowed) fail(429,"Too many payment attempts. Please try again later.");
+    const body=await readBody(req);
+    const amount=Number(body.amount);
+    if(!Number.isInteger(amount)||amount<MIN_TOPUP||amount>MAX_TOPUP) fail(400,`Enter a whole-taka amount between ৳${MIN_TOPUP} and ৳${MAX_TOPUP.toLocaleString()}.`);
+    const offerId=Number.isInteger(Number(body.offer_id))?Number(body.offer_id):null;
+    const tranId="SN"+Date.now().toString(36).toUpperCase()+crypto.randomBytes(4).toString("hex").toUpperCase();
+    const base=publicApiUrl(req);
+    const urls={base,success:`${base}/api/payments/${gateway.provider}/success`,fail:`${base}/api/payments/${gateway.provider}/fail`,cancel:`${base}/api/payments/${gateway.provider}/cancel`,ipn:`${base}/api/payments/${gateway.provider}/ipn`};
+    db.prepare("INSERT INTO payments(tran_id,user_id,amount,offer_id,provider) VALUES(?,?,?,?,?)").run(tranId,user.id,amount,offerId,gateway.provider);
+    let started;
+    try { started=await gateway.init({tranId,amount,user,urls}); }
+    catch(e){ db.prepare("UPDATE payments SET status='failed' WHERE tran_id=?").run(tranId); console.error("Payment init failed:",e.message); fail(502,"We couldn't start the payment. Please try again."); }
+    db.prepare("UPDATE payments SET gateway_session=? WHERE tran_id=?").run(started.sessionKey,tranId);
+    return send(res,200,{ok:true,tran_id:tranId,redirect_url:started.gatewayUrl,amount});
+  }
+  if(req.method==="GET"&&url.pathname==="/api/payments/status") {
+    requireUser(user);
+    const row=db.prepare("SELECT tran_id,amount,status,offer_id,created_at,paid_at FROM payments WHERE tran_id=? AND user_id=?").get(String(url.searchParams.get("tran_id")||""),user.id);
+    if(!row) fail(404,"Payment not found.");
+    return send(res,200,row);
+  }
+  const payCb=url.pathname.match(/^\/api\/payments\/(sslcommerz|mock)\/(success|fail|cancel|ipn)$/);
+  if(payCb&&(req.method==="POST"||req.method==="GET")) {
+    if(payCb[1]!==gateway.provider) fail(404,"Not found.");
+    const form=req.method==="POST"?await readForm(req):Object.fromEntries(url.searchParams);
+    const tranId=String(form.tran_id||"");
+    const kind=payCb[2];
+    const outcome=await settlePayment(tranId,kind,form);
+    if(kind==="ipn") return send(res,200,{ok:true});
+    const target=`${WEB_ORIGIN||""}/profile?payment=${outcome.status}&tran=${encodeURIComponent(tranId)}${outcome.offer_id?`&offer=${outcome.offer_id}`:""}`;
+    res.writeHead(303,{Location:target,"Cache-Control":"no-store"});return res.end();
+  }
+  if(gateway.provider==="mock"&&url.pathname==="/api/payments/mock/checkout"&&req.method==="GET") {
+    const t=String(url.searchParams.get("tran_id")||"");const sess=gateway.sessions.get(t);
+    if(!sess) fail(404,"Unknown payment session.");
+    const esc=(v)=>String(v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    const btn=(state,label,cls)=>`<form method="POST" action="${esc(sess.urls.base)}/api/payments/mock/pay"><input type="hidden" name="tran_id" value="${esc(t)}"><input type="hidden" name="state" value="${state}"><button class="${cls}">${label}</button></form>`;
+    res.writeHead(200,{"Content-Type":"text/html; charset=utf-8"});
+    return res.end(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mock payment</title><style>body{font:16px system-ui;display:grid;place-items:center;min-height:100vh;background:#f4f1e8}main{background:#fff;padding:28px;border-radius:16px;max-width:360px;width:90%;text-align:center;box-shadow:0 20px 50px #0002}button{width:100%;margin:6px 0;padding:12px;border:0;border-radius:10px;font-weight:700;cursor:pointer}.p{background:#0e6b5c;color:#fff}.f{background:#bd4d2c;color:#fff}.c{background:#e5e0d0}</style><main><h2>Mock gateway</h2><p>Development only. Pay <b>৳${sess.amount}</b> to ServiNear.</p>${btn("paid","Pay now","p")}${btn("failed","Simulate failure","f")}${btn("cancelled","Cancel","c")}</main>`);
+  }
+  if(gateway.provider==="mock"&&url.pathname==="/api/payments/mock/pay"&&req.method==="POST") {
+    const form=await readForm(req);
+    const state=["paid","failed","cancelled"].includes(form.state)?form.state:"cancelled";
+    const sess=gateway.complete(String(form.tran_id||""),state);
+    if(!sess) fail(404,"Unknown payment session.");
+    // Emulates the gateway redirecting the customer back with its result.
+    const outcome=await settlePayment(String(form.tran_id),state==="paid"?"success":state==="failed"?"fail":"cancel",{val_id:sess.valId||""});
+    res.writeHead(303,{Location:`${WEB_ORIGIN||""}/profile?payment=${outcome.status}&tran=${encodeURIComponent(form.tran_id)}${outcome.offer_id?`&offer=${outcome.offer_id}`:""}`,"Cache-Control":"no-store"});
+    return res.end();
+  }
+
   if(req.method==="GET"&&url.pathname==="/api/wallet") {
     requireUser(user);
     ensureWallet(user.id);
@@ -1233,30 +1350,32 @@ async function handleApi(req,res,url) {
 
   if(req.method==="POST"&&url.pathname==="/api/wallet/withdraw") {
     requireUser(user,["worker"]);
+    requirePhone(user,true);
     const body = await readBody(req);
     const amount = Number(body.amount);
-    const method = String(body.method||"bKash").trim();
-    const phone = validateText(body.phone,"MFS Phone Number",11,15);
+    const method = ["bKash","Nagad","Rocket"].includes(body.method)?body.method:"bKash";
     if(!Number.isInteger(amount)||amount<100) fail(400,"Minimum payout withdrawal is ৳100.");
+    const dest = normalizeBdPhone(body.phone);
+    if(!dest||dest.e164!==user.phone_e164) fail(400,"For your security, payouts go only to your verified mobile number ("+user.phone+").");
+    if(db.prepare("SELECT COUNT(*) AS c FROM payouts WHERE user_id=? AND status='pending'").get(user.id).c>=3) fail(429,"You already have 3 payouts waiting. Please wait for them to be processed.");
 
     ensureWallet(user.id);
-    const wallet = db.prepare("SELECT balance FROM wallets WHERE user_id=?").get(user.id);
-    if(!wallet||wallet.balance < amount) fail(400,"Insufficient wallet balance.");
-
+    let payoutId;
     db.exec("BEGIN IMMEDIATE");
     try {
-      db.prepare("UPDATE wallets SET balance=balance-? WHERE user_id=?").run(amount, user.id);
-      const trxId = "WTH-" + Date.now().toString(36).toUpperCase();
+      const debit = db.prepare("UPDATE wallets SET balance=balance-? WHERE user_id=? AND balance>=?").run(amount, user.id, amount);
+      if(!debit.changes){ db.exec("ROLLBACK"); fail(400,"Insufficient wallet balance."); }
+      payoutId = Number(db.prepare("INSERT INTO payouts(user_id,amount,method,account) VALUES(?,?,?,?)").run(user.id, amount, method, dest.local).lastInsertRowid);
       db.prepare("INSERT INTO transactions(user_id, type, amount, payment_method, trx_id, details) VALUES(?,?,?,?,?,?)")
-        .run(user.id, "withdrawal", amount, method, trxId, `Payout request to ${method} (${phone})`);
+        .run(user.id, "withdrawal", amount, method, "PAYOUT-"+payoutId, `Payout request to ${method} (${dest.local}), awaiting processing`);
       db.exec("COMMIT");
     } catch(err) {
-      db.exec("ROLLBACK");
+      try{db.exec("ROLLBACK");}catch{}
       throw err;
     }
-
-    notifyUser(user.id, "Withdrawal Processing", `Your payout of ৳${amount} to ${method} (${phone}) is being processed.`, "wallet", "/profile");
-    return send(res,200,{ok:true,amount,method,phone});
+    notifyUser(user.id, "Payout requested", `Your payout of ৳${amount} to ${method} (${dest.local}) is queued. We process payouts within 1 business day.`, "wallet", "/profile");
+    notifyAdmins?.("Payout requested", `${user.name} requested a ৳${amount} payout.`, "wallet", "/admin");
+    return send(res,200,{ok:true,payout_id:payoutId,amount,method,phone:dest.local,status:"pending"});
   }
 
   if(req.method==="GET"&&url.pathname==="/api/user/settings") {
@@ -1318,6 +1437,7 @@ async function handleApi(req,res,url) {
       notif_reactions,notif_comments,notif_messages,notif_all,notif_updates,notif_hire,language,
       user.id
     );
+    otp.resetIfChanged(user.id,phone);
 
     const updated=currentUser(user.id);
     if(updated&&updated.role==="worker") indexWorker(updated);
@@ -1347,6 +1467,13 @@ const server=http.createServer(async(req,res)=>{
   headers["Cross-Origin-Opener-Policy"]="same-origin-allow-popups";
   Object.entries(headers).forEach(([key,value])=>res.setHeader(key,value));
   try {
+    const gatewayCallback=/^\/api\/payments\/(sslcommerz|mock)\/(success|fail|cancel|ipn|pay)$/.test(url.pathname);
+    if(url.pathname.startsWith("/api/")&&gatewayCallback) {
+      if(req.method==="OPTIONS"){res.writeHead(204);return res.end();}
+      const gl=limiter.hit("pay-cb:"+ctxIp,120,60*1000);
+      if(!gl.allowed)fail(429,"Too many requests.");
+      return await handleApi(req,res,url);
+    }
     if(url.pathname.startsWith("/api/")) {
       const origin=req.headers.origin;
       if(origin&&WEB_ORIGIN&&origin!==WEB_ORIGIN)fail(403,"This website origin is not allowed.");
@@ -1375,7 +1502,7 @@ const server=http.createServer(async(req,res)=>{
     res.writeHead(200,{"Content-Type":contentType(actual),"Cache-Control":actual.endsWith(".html")?"no-cache":"public, max-age=3600"});
     if(req.method==="HEAD")return res.end();fs.createReadStream(actual).pipe(res);
   } catch(error) {
-    if(res.headersSent)return res.end();const status=error.status||500;if(status===500)console.error(error);send(res,status,{message:status===500?"The request could not be completed.":error.message});
+    if(res.headersSent)return res.end();const status=error.status||500;if(status===500)console.error(error);send(res,status,{message:status===500?"The request could not be completed.":error.message,...(status<500&&error.extra?error.extra:{})});
   }
 });
 

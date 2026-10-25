@@ -25,6 +25,28 @@ services:
         sync: false                 # 14+ characters; set in the Render dashboard
       - key: GOOGLE_CLIENT_ID
         sync: false
+      - key: PUBLIC_API_URL
+        sync: false                 # https://your-api.onrender.com (payment gateway callbacks)
+      - key: SMS_PROVIDER
+        sync: false                 # twilio or bulksmsbd
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM
+        sync: false
+      - key: SSLCOMMERZ_STORE_ID
+        sync: false
+      - key: SSLCOMMERZ_STORE_PASSWORD
+        sync: false
+      - key: SSLCOMMERZ_LIVE
+        sync: false
+      - key: EMBEDDING_BASE_URL
+        sync: false
+      - key: EMBEDDING_MODEL
+        sync: false
+      - key: EMBEDDING_API_KEY
+        sync: false
       - key: WEB_ORIGIN
         sync: false                 # e.g. https://app.example.com
       - key: COOKIE_DOMAIN

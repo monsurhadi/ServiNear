@@ -1,7 +1,7 @@
 "use strict";
 // Admin control-plane API. Every route requires an authenticated admin and every write is audited.
 
-function createAdminApi({ db, send, fail, requireUser, readBody, notifyUser }) {
+function createAdminApi({ db, send, fail, requireUser, readBody, notifyUser, vectors, ensureWallet }) {
   const num = (v, d, min, max) => {
     const n = v === null || v === undefined || String(v).trim() === "" ? NaN : Number(v);
     return Math.max(min, Math.min(max, Number.isFinite(n) ? Math.floor(n) : d));
@@ -44,6 +44,7 @@ function createAdminApi({ db, send, fail, requireUser, readBody, notifyUser }) {
           jobsOpen: count("SELECT COUNT(*) c FROM jobs WHERE status='open'"), jobsAccepted: count("SELECT COUNT(*) c FROM jobs WHERE status='accepted'"),
           jobsCompleted: count("SELECT COUNT(*) c FROM jobs WHERE status='completed'"), offers: count("SELECT COUNT(*) c FROM offers"),
           reviews: count("SELECT COUNT(*) c FROM reviews"), openTickets: count("SELECT COUNT(*) c FROM support_tickets WHERE status!='resolved'"),
+          pendingPayouts: count("SELECT COUNT(*) c FROM payouts WHERE status='pending'"), reviewPayments: count("SELECT COUNT(*) c FROM payments WHERE status='review'"), phoneVerified: count("SELECT COUNT(*) c FROM users WHERE phone_verified=1"),
           pendingNid: count("SELECT COUNT(*) c FROM nid_verifications WHERE status='pending'"),
           escrowHeld: count("SELECT COALESCE(SUM(amount),0) c FROM escrows WHERE status='held'"),
           escrowReleased: count("SELECT COALESCE(SUM(amount),0) c FROM escrows WHERE status='released'")
@@ -61,7 +62,7 @@ function createAdminApi({ db, send, fail, requireUser, readBody, notifyUser }) {
       if (["active", "suspended"].includes(q.get("status"))) { where.push("status=?"); args.push(q.get("status")); }
       const limit = num(q.get("limit"), 25, 1, 100), offset = (num(q.get("page"), 1, 1, 100000) - 1) * limit;
       const total = count(`SELECT COUNT(*) c FROM users WHERE ${where.join(" AND ")}`, ...args);
-      const rows = db.prepare(`SELECT id,name,email,role,phone,area,category,verified,status,rate,created_at,last_login_at,(google_id IS NOT NULL) AS google
+      const rows = db.prepare(`SELECT id,name,email,role,phone,phone_verified,area,category,verified,status,rate,created_at,last_login_at,(google_id IS NOT NULL) AS google
         FROM users WHERE ${where.join(" AND ")} ORDER BY id DESC LIMIT ? OFFSET ?`).all(...args, limit, offset);
       return send(res, 200, { total, rows });
     }
@@ -148,11 +149,102 @@ function createAdminApi({ db, send, fail, requireUser, readBody, notifyUser }) {
 
     if (m === "GET" && p === "/api/admin/payments") {
       return send(res, 200, {
+        payments: db.prepare(`SELECT p.id,p.tran_id,p.amount,p.status,p.provider,p.method,p.bank_tran_id,p.risk_level,p.created_at,p.paid_at,u.name AS user
+          FROM payments p JOIN users u ON u.id=p.user_id ORDER BY p.id DESC LIMIT 100`).all(),
+        payouts: db.prepare(`SELECT o.id,o.amount,o.method,o.account,o.status,o.reference,o.admin_note,o.created_at,o.processed_at,u.name AS user,u.phone_verified
+          FROM payouts o JOIN users u ON u.id=o.user_id ORDER BY (o.status='pending') DESC, o.id DESC LIMIT 100`).all(),
         escrows: db.prepare(`SELECT e.id,e.job_id,e.amount,e.status,e.created_at,e.released_at,c.name AS customer,w.name AS provider
-          FROM escrows e JOIN users c ON c.id=e.customer_id JOIN users w ON w.id=e.worker_id ORDER BY e.id DESC LIMIT 100`).all(),
+          FROM escrows e JOIN users c ON c.id=e.customer_id JOIN users w ON w.id=e.worker_id ORDER BY (e.status='held') DESC, e.id DESC LIMIT 100`).all(),
         transactions: db.prepare(`SELECT t.id,t.type,t.amount,t.payment_method,t.trx_id,t.created_at,u.name AS user
           FROM transactions t JOIN users u ON u.id=t.user_id ORDER BY t.id DESC LIMIT 100`).all()
       });
+    }
+
+    // Gateway payments held for manual review (flagged risky by the gateway).
+    const pm = p.match(/^\/api\/admin\/payments\/(\d+)\/(approve|reject)$/);
+    if (m === "POST" && pm) {
+      const pay = db.prepare("SELECT * FROM payments WHERE id=?").get(Number(pm[1]));
+      if (!pay) fail(404, "Payment not found.");
+      if (pay.status !== "review") fail(409, "Only payments held for review can be decided.");
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        if (pm[2] === "approve") {
+          ensureWallet(pay.user_id);
+          db.prepare("UPDATE payments SET status='paid' WHERE id=? AND status='review'").run(pay.id);
+          db.prepare("UPDATE wallets SET balance=balance+? WHERE user_id=?").run(pay.amount, pay.user_id);
+          db.prepare("INSERT INTO transactions(user_id,type,amount,payment_method,trx_id,details) VALUES(?,?,?,?,?,?)")
+            .run(pay.user_id, "deposit", pay.amount, pay.method || pay.provider, pay.bank_tran_id || pay.tran_id, `Wallet top-up (${pay.tran_id}), approved after review`);
+        } else db.prepare("UPDATE payments SET status='rejected' WHERE id=? AND status='review'").run(pay.id);
+        db.exec("COMMIT");
+      } catch (e) { db.exec("ROLLBACK"); throw e; }
+      audit(user, "payment." + pm[2], "payment", pay.id, { tran_id: pay.tran_id, amount: pay.amount }, ip);
+      notifyUser?.(pay.user_id, pm[2] === "approve" ? "Payment approved" : "Payment declined", pm[2] === "approve" ? `৳${pay.amount} was added to your wallet.` : "We could not accept this payment. Contact support if you were charged.", "wallet");
+      return send(res, 200, { ok: true });
+    }
+
+    // Payout queue: admin sends the money via bKash/Nagad/Rocket, then records the reference.
+    const om = p.match(/^\/api\/admin\/payouts\/(\d+)\/(pay|reject)$/);
+    if (m === "POST" && om) {
+      const b = await readBody(req);
+      const po = db.prepare("SELECT * FROM payouts WHERE id=?").get(Number(om[1]));
+      if (!po) fail(404, "Payout not found.");
+      if (po.status !== "pending") fail(409, "This payout was already processed.");
+      const ref = String(b.reference || "").trim().slice(0, 80), note = String(b.note || "").trim().slice(0, 200);
+      if (om[2] === "pay" && ref.length < 4) fail(400, "Enter the bKash/Nagad/Rocket transaction reference you paid with.");
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        db.prepare("UPDATE payouts SET status=?,reference=?,admin_note=?,processed_at=CURRENT_TIMESTAMP,processed_by=? WHERE id=? AND status='pending'")
+          .run(om[2] === "pay" ? "paid" : "rejected", ref || null, note || null, user.id, po.id);
+        if (om[2] === "reject") {
+          ensureWallet(po.user_id);
+          db.prepare("UPDATE wallets SET balance=balance+? WHERE user_id=?").run(po.amount, po.user_id);
+          db.prepare("INSERT INTO transactions(user_id,type,amount,payment_method,trx_id,details) VALUES(?,?,?,?,?,?)")
+            .run(po.user_id, "refund", po.amount, po.method, "PAYOUT-" + po.id, `Payout #${po.id} declined, returned to wallet${note ? ": " + note : ""}`);
+        }
+        db.exec("COMMIT");
+      } catch (e) { db.exec("ROLLBACK"); throw e; }
+      audit(user, "payout." + om[2], "payout", po.id, { amount: po.amount, reference: ref || null }, ip);
+      notifyUser?.(po.user_id, om[2] === "pay" ? "Payout sent" : "Payout declined", om[2] === "pay" ? `৳${po.amount} was sent to ${po.method} ${po.account} (ref ${ref}).` : `Your ৳${po.amount} payout was declined and returned to your wallet.${note ? " Reason: " + note : ""}`, "wallet");
+      return send(res, 200, { ok: true });
+    }
+
+    // Dispute resolution for escrows that are stuck: refund the customer or release to the provider.
+    const em2 = p.match(/^\/api\/admin\/escrows\/(\d+)\/(refund|release)$/);
+    if (m === "POST" && em2) {
+      const b = await readBody(req);
+      const es = db.prepare("SELECT * FROM escrows WHERE id=?").get(Number(em2[1]));
+      if (!es) fail(404, "Escrow not found.");
+      if (es.status !== "held") fail(409, "This escrow is already settled.");
+      const note = String(b.note || "").trim().slice(0, 200);
+      if (note.length < 5) fail(400, "Write a short note explaining the decision.");
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        ensureWallet(es.customer_id); ensureWallet(es.worker_id);
+        db.prepare("UPDATE wallets SET locked_escrow=MAX(0,locked_escrow-?) WHERE user_id=?").run(es.amount, es.customer_id);
+        if (em2[2] === "refund") {
+          db.prepare("UPDATE escrows SET status='refunded',released_at=CURRENT_TIMESTAMP WHERE id=? AND status='held'").run(es.id);
+          db.prepare("UPDATE wallets SET balance=balance+? WHERE user_id=?").run(es.amount, es.customer_id);
+          db.prepare("INSERT INTO transactions(user_id,type,amount,payment_method,details) VALUES(?,?,?,'Escrow Refund',?)").run(es.customer_id, "refund", es.amount, `Escrow refunded for Task #${es.job_id}: ${note}`);
+          db.prepare("UPDATE jobs SET status='cancelled' WHERE id=?").run(es.job_id);
+        } else {
+          db.prepare("UPDATE escrows SET status='released',released_at=CURRENT_TIMESTAMP WHERE id=? AND status='held'").run(es.id);
+          db.prepare("UPDATE wallets SET balance=balance+? WHERE user_id=?").run(es.amount, es.worker_id);
+          db.prepare("INSERT INTO transactions(user_id,type,amount,payment_method,details) VALUES(?,?,?,'Escrow Release',?)").run(es.worker_id, "escrow_release", es.amount, `Released by admin for Task #${es.job_id}: ${note}`);
+          db.prepare("UPDATE jobs SET status='completed' WHERE id=?").run(es.job_id);
+        }
+        db.exec("COMMIT");
+      } catch (e) { db.exec("ROLLBACK"); throw e; }
+      audit(user, "escrow." + em2[2], "escrow", es.id, { amount: es.amount, note }, ip);
+      const to = em2[2] === "refund" ? es.customer_id : es.worker_id;
+      notifyUser?.(to, em2[2] === "refund" ? "Escrow refunded" : "Escrow released", `৳${es.amount} for Task #${es.job_id}. ${note}`, "wallet");
+      return send(res, 200, { ok: true });
+    }
+
+    if (m === "GET" && p === "/api/admin/vector/status") return send(res, 200, vectors.stats());
+    if (m === "POST" && p === "/api/admin/vector/reindex") {
+      const n = vectors.backfill();
+      audit(user, "search.reindex", "vector", "", { queued: n }, ip);
+      return send(res, 200, { ok: true, queued: n, ...vectors.stats() });
     }
 
     if (p === "/api/admin/categories" && m === "GET") {

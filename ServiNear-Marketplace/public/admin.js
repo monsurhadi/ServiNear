@@ -76,7 +76,8 @@
   const VIEWS = {
     async overview(v) {
       const d = await api("/api/admin/overview"), t = d.totals;
-      S.badges = { verify: t.pendingNid, support: t.openTickets }; nav();
+      S.badges = { verify: t.pendingNid, support: t.openTickets, payments: t.pendingPayouts + t.reviewPayments }; nav();
+      const vs = await api("/api/admin/vector/status").catch(() => null);
       const k = (label, val, sub = "") => `<div class="card kpi"><small>${label}</small><strong>${val}</strong><em>${sub}</em></div>`;
       const maxCat = Math.max(1, ...d.topCategories.map((c) => c.n));
       v.innerHTML = `<div class="grid kpis">
@@ -84,12 +85,13 @@
         ${k("Verified providers", t.verifiedProviders, `${t.providers ? Math.round((t.verifiedProviders / t.providers) * 100) : 0}% of providers`)}
         ${k("Open tasks", t.jobsOpen, `${t.jobsAccepted} in progress · ${t.jobsCompleted} done`)}
         ${k("Offers", t.offers)}${k("Escrow held", taka(t.escrowHeld), `${taka(t.escrowReleased)} released`)}
-        ${k("Pending NID", t.pendingNid, "awaiting review")}${k("Open tickets", t.openTickets)}${k("Suspended", t.suspended, "accounts")}
+        ${k("Pending NID", t.pendingNid, "awaiting review")}${k("Open tickets", t.openTickets)}${k("Suspended", t.suspended, "accounts")}${k("Phone verified", t.phoneVerified, `${t.users ? Math.round((t.phoneVerified / t.users) * 100) : 0}% of users`)}${k("Payouts waiting", t.pendingPayouts, `${t.reviewPayments} payment(s) in review`)}
       </div>
       <div class="grid two">
         <div class="card"><h3>New sign-ups</h3>${bars(d.signups, "Sign-ups")}</div>
         <div class="card"><h3>Tasks posted</h3>${bars(d.jobsPosted, "Tasks posted")}</div>
         <div class="card"><h3>Top categories</h3>${d.topCategories.length ? d.topCategories.map((c) => `<div class="hbar"><span>${esc(c.name)}</span><span><b style="width:${(c.n / maxCat) * 100}%"></b></span><span>${c.n}</span></div>`).join("") : '<div class="empty">No tasks yet.</div>'}</div>
+        ${vs ? `<div class="card"><h3>Search index</h3><div class="hbar" style="grid-template-columns:110px 1fr"><span>Engine</span><span style="height:auto;background:none"><b style="all:unset">${vs.provider === "external" ? "Semantic (" + esc(vs.model) + ")" : "Built-in (no embedding provider set)"}</b></span></div><div class="hbar" style="grid-template-columns:110px 1fr"><span>Indexed items</span><span style="height:auto;background:none"><b style="all:unset">${vs.total}</b></span></div><div class="hbar" style="grid-template-columns:110px 1fr"><span>Queued</span><span style="height:auto;background:none"><b style="all:unset">${vs.queued}</b></span></div>${vs.last_error ? `<p class="sub" style="color:var(--rust)">Last error: ${esc(vs.last_error)}</p>` : ""}<button class="btn sm" data-act="reindex">Rebuild index</button></div>` : ""}
         <div class="card"><h3>Recent admin activity</h3>${d.recentAudit.length ? d.recentAudit.map((a) => `<div style="padding:7px 0;border-bottom:1px solid #f0eadb"><strong>${esc(a.action)}</strong> <span class="sub" style="color:var(--muted)">${esc(a.actor_name)} · ${when(a.created_at)}</span></div>`).join("") : '<div class="empty">No activity yet.</div>'}</div>
       </div>`;
     },
@@ -102,7 +104,7 @@
         table([
           ["User", (u) => `<strong>${esc(u.name)}</strong><span class="sub">${esc(u.email)}${u.google ? " · Google" : ""}</span>`],
           ["Role", (u) => pill(u.role === "worker" ? "provider" : u.role, u.role === "admin" ? "info" : "")],
-          ["Status", (u) => st(u.status) + (u.role === "worker" ? " " + (u.verified ? pill("verified", "ok") : pill("unverified", "warn")) : "")],
+          ["Status", (u) => st(u.status) + (u.role === "worker" ? " " + (u.verified ? pill("verified", "ok") : pill("unverified", "warn")) : "") + " " + (u.phone_verified ? pill("phone ✓", "ok") : pill("phone ✗", ""))],
           ["Last login", (u) => when(u.last_login_at)],
           ["Actions", (u) => `<div class="acts">${u.role === "worker" ? `<button class="btn sm" data-act="verify" data-id="${u.id}" data-v="${u.verified ? 0 : 1}">${u.verified ? "Unverify" : "Verify"}</button>` : ""}<button class="btn sm" data-act="${u.status === "active" ? "suspend" : "activate"}" data-id="${u.id}" data-name="${esc(u.name)}">${u.status === "active" ? "Suspend" : "Activate"}</button><button class="btn sm ghost" data-act="role" data-id="${u.id}" data-role="${u.role}">Role</button><button class="btn sm ghost" data-act="revoke" data-id="${u.id}">Sign out</button></div>`]
         ], d.rows, "No users match.") + pager("users", d.total);
@@ -131,11 +133,31 @@
 
     async payments(v) {
       const d = await api("/api/admin/payments");
-      v.innerHTML = `<h3>Escrows</h3>` + table([
-        ["Task", (e) => `#${e.job_id}`], ["Customer → Provider", (e) => `${esc(e.customer)} → ${esc(e.provider)}`], ["Amount", (e) => taka(e.amount)], ["Status", (e) => st(e.status)], ["Created", (e) => when(e.created_at)]
-      ], d.escrows, "No escrows yet.") + `<h3 style="margin-top:22px">Transactions</h3>` + table([
-        ["User", (t) => esc(t.user)], ["Type", (t) => pill(t.type.replace("_", " "))], ["Amount", (t) => taka(t.amount)], ["Method", (t) => esc(t.payment_method || "—")], ["Reference", (t) => esc(t.trx_id || "—")], ["Date", (t) => when(t.created_at)]
-      ], d.transactions, "No transactions yet.");
+      S.badges.payments = d.payouts.filter((p) => p.status === "pending").length + d.payments.filter((p) => p.status === "review").length; nav();
+      const held = d.escrows.filter((e) => e.status === "held").length;
+      v.innerHTML = `<div class="grid kpis">
+          <div class="card kpi"><small>Payouts waiting</small><strong>${d.payouts.filter((p) => p.status === "pending").length}</strong><em>${taka(d.payouts.filter((p) => p.status === "pending").reduce((a, p) => a + p.amount, 0))} to send</em></div>
+          <div class="card kpi"><small>Payments in review</small><strong>${d.payments.filter((p) => p.status === "review").length}</strong><em>flagged by the gateway</em></div>
+          <div class="card kpi"><small>Escrows held</small><strong>${held}</strong><em>${taka(d.escrows.filter((e) => e.status === "held").reduce((a, e) => a + e.amount, 0))} locked</em></div></div>
+        <h3>Payout queue</h3><p class="hint">Send the money from your bKash, Nagad or Rocket account to the number shown, then record the transaction reference.</p>` +
+        table([
+          ["Provider", (p) => `<strong>${esc(p.user)}</strong><span class="sub">${p.phone_verified ? "verified number" : "unverified"}</span>`],
+          ["Send to", (p) => `${esc(p.method)} <b>${esc(p.account)}</b>`], ["Amount", (p) => `<strong>${taka(p.amount)}</strong>`],
+          ["Status", (p) => st(p.status) + (p.reference ? `<span class="sub">ref ${esc(p.reference)}</span>` : "")], ["Requested", (p) => when(p.created_at)],
+          ["", (p) => p.status === "pending" ? `<div class="acts"><button class="btn sm primary" data-act="payout-pay" data-id="${p.id}" data-amount="${p.amount}" data-account="${esc(p.account)}" data-method="${esc(p.method)}">Mark paid</button><button class="btn sm danger" data-act="payout-reject" data-id="${p.id}">Decline</button></div>` : ""]
+        ], d.payouts, "No payout requests.") +
+        `<h3 style="margin-top:24px">Gateway payments</h3>` + table([
+          ["User", (p) => esc(p.user)], ["Amount", (p) => taka(p.amount)], ["Method", (p) => esc(p.method || p.provider)], ["Reference", (p) => `<code>${esc(p.tran_id)}</code>`],
+          ["Status", (p) => st(p.status) + (p.risk_level === 1 ? " " + pill("risky", "bad") : "")], ["Date", (p) => when(p.created_at)],
+          ["", (p) => p.status === "review" ? `<div class="acts"><button class="btn sm primary" data-act="pay-approve" data-id="${p.id}">Approve</button><button class="btn sm danger" data-act="pay-reject" data-id="${p.id}">Reject</button></div>` : ""]
+        ], d.payments, "No gateway payments yet.") +
+        `<h3 style="margin-top:24px">Escrows</h3>` + table([
+          ["Task", (e) => `#${e.job_id}`], ["Customer → Provider", (e) => `${esc(e.customer)} → ${esc(e.provider)}`], ["Amount", (e) => taka(e.amount)], ["Status", (e) => st(e.status)], ["Created", (e) => when(e.created_at)],
+          ["", (e) => e.status === "held" ? `<div class="acts"><button class="btn sm" data-act="escrow-release" data-id="${e.id}">Release to provider</button><button class="btn sm danger" data-act="escrow-refund" data-id="${e.id}">Refund customer</button></div>` : ""]
+        ], d.escrows, "No escrows yet.") +
+        `<h3 style="margin-top:24px">Recent transactions</h3>` + table([
+          ["User", (t) => esc(t.user)], ["Type", (t) => pill(t.type.replace("_", " "))], ["Amount", (t) => taka(t.amount)], ["Method", (t) => esc(t.payment_method || "—")], ["Reference", (t) => esc(t.trx_id || "—")], ["Date", (t) => when(t.created_at)]
+        ], d.transactions, "No transactions yet.");
     },
 
     async reviews(v) {
@@ -194,6 +216,11 @@
       else if (a === "jdelete") { if (!(await ask("Delete task?", `Permanently delete <b>${esc(el.dataset.name)}</b> and its offers? This cannot be undone.`, "Delete"))) return; await api(`/api/admin/jobs/${id}`, { method: "DELETE" }); toast("Task deleted"); }
       else if (a === "rdelete") { if (!(await ask("Remove review?", "The review will be permanently removed and the provider's rating recalculated.", "Remove"))) return; await api(`/api/admin/reviews/${id}`, { method: "DELETE" }); toast("Review removed"); }
       else if (a === "nid") { const ok = el.dataset.a === "approve"; if (!(await ask(ok ? "Approve verification?" : "Reject verification?", ok ? "The provider receives the verified badge." : "The application is marked rejected.", ok ? "Approve" : "Reject", !ok))) return; await send("/api/admin/nid/verify", "PATCH", { user_id: Number(id), action: el.dataset.a }); toast(ok ? "Provider verified" : "Application rejected"); }
+      else if (a === "pay-approve" || a === "pay-reject") { const ok = a === "pay-approve"; if (!(await ask(ok ? "Approve payment?" : "Reject payment?", ok ? "The amount is added to the user's wallet." : "No money is credited. Refund the customer in your gateway dashboard if they were charged.", ok ? "Approve" : "Reject", !ok))) return; await send(`/api/admin/payments/${id}/${ok ? "approve" : "reject"}`, "POST"); toast(ok ? "Payment approved" : "Payment rejected"); }
+      else if (a === "payout-pay") { const ref = prompt(`Send ${taka(el.dataset.amount)} to ${el.dataset.method} ${el.dataset.account}, then enter the transaction reference:`); if (!ref) return; await send(`/api/admin/payouts/${id}/pay`, "POST", { reference: ref }); toast("Payout recorded as paid"); }
+      else if (a === "payout-reject") { const note = prompt("Reason for declining (shown to the provider):"); if (note === null) return; await send(`/api/admin/payouts/${id}/reject`, "POST", { note }); toast("Payout declined, money returned to wallet"); }
+      else if (a === "escrow-release" || a === "escrow-refund") { const rel = a === "escrow-release"; const note = prompt(rel ? "Release the escrow to the provider. Write the reason:" : "Refund the customer and cancel the task. Write the reason:"); if (!note) return; if (!(await ask(rel ? "Release to provider?" : "Refund customer?", `This moves the held money ${rel ? "to the provider" : "back to the customer"} and cannot be undone.`, rel ? "Release" : "Refund", !rel))) return; await send(`/api/admin/escrows/${id}/${rel ? "release" : "refund"}`, "POST", { note }); toast(rel ? "Escrow released" : "Escrow refunded"); }
+      else if (a === "reindex") { const r = await send("/api/admin/vector/reindex", "POST"); toast(`Search index rebuild started (${r.queued} items queued)`); }
       else if (a === "ticket") { await send(`/api/admin/support/${id}`, "PATCH", { status: el.dataset.s }); toast("Ticket updated"); }
       else if (a === "cedit") { const d = prompt("Category description", el.dataset.d); if (d === null) return; await send(`/api/admin/categories/${id}`, "PATCH", { description: d }); toast("Category updated"); }
       else if (a === "cdelete") { if (!(await ask("Delete category?", `Remove <b>${esc(el.dataset.name)}</b>? Only possible if no tasks or providers use it.`, "Delete"))) return; await api(`/api/admin/categories/${id}`, { method: "DELETE" }); toast("Category deleted"); }

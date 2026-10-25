@@ -120,7 +120,9 @@ async function api(path, options = {}) {
     : await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(data.message || `Request failed (HTTP ${response.status}).`);
+    const err = new Error(data.message || `Request failed (HTTP ${response.status}).`);
+    err.status = response.status; err.data = data;
+    throw err;
   }
 
   return data;
@@ -520,13 +522,15 @@ function filteredProviders() {
   const area = $("#area-search")?.value?.trim().toLowerCase() || "";
   const verified = $("#verified-filter")?.checked || false;
   const sort = $("#sort-filter")?.value || "recommended";
+  const semantic = query && state.vectorResults && state.vectorQuery === query ? state.vectorResults : null;
 
-  const rows = state.workers.filter((worker) => 
+  const rows = state.workers.filter((worker) =>
     (!verified || worker.verified) &&
-    (!query || `${worker.category} ${worker.name} ${worker.bio}`.toLowerCase().includes(query)) &&
+    (!query || semantic?.has(worker.id) || `${worker.category} ${worker.name} ${worker.bio}`.toLowerCase().includes(query)) &&
     (!area || worker.area.toLowerCase().includes(area) || state.position)
   );
 
+  if (semantic && sort === "recommended") rows.sort((a, b) => (semantic.get(b.id)?.score ?? -1) - (semantic.get(a.id)?.score ?? -1));
   if (sort === "distance" && state.position) rows.sort((a, b) => haversine(state.position, a) - haversine(state.position, b));
   if (sort === "rating") rows.sort((a, b) => b.rating - a.rating || b.verified - a.verified);
   if (sort === "price") rows.sort((a, b) => a.rate - b.rate);
@@ -535,22 +539,31 @@ function filteredProviders() {
 
 
 let vectorSearchTimeout = null;
-async function triggerVectorSearch(query) {
+let vectorSeq = 0;
+function triggerVectorSearch(query) {
   clearTimeout(vectorSearchTimeout);
-  if (!query || query.trim().length < 2) {
-    state.vectorResults = null;
-    renderProviders();
+  const q = String(query || "").trim();
+  if (q.length < 3) {
+    state.vectorPending = false;
+    if (state.vectorResults) { state.vectorResults = null; state.vectorQuery = ""; renderProviders(); }
     return;
   }
+  state.vectorPending = true;
   vectorSearchTimeout = setTimeout(async () => {
+    const seq = ++vectorSeq;
     try {
-      const data = await api(`/api/vector/search?q=${encodeURIComponent(query)}&type=workers&limit=24`);
-      state.vectorResults = new Map(data.results.map(r => [r.entity_id, r]));
+      const geo = state.position ? `&lat=${state.position.latitude}&lng=${state.position.longitude}` : "";
+      const data = await api(`/api/vector/search?q=${encodeURIComponent(q)}&type=workers&limit=80${geo}`);
+      if (seq !== vectorSeq) return; // a newer search superseded this one
+      state.vectorResults = new Map(data.results.map((r) => [r.entity_id, r]));
+      state.vectorQuery = q.toLowerCase();
+      state.vectorPending = false;
       renderProviders();
-    } catch(e) {
-      console.error("Vector search error:", e);
+    } catch (e) {
+      state.vectorResults = null; // fall back to plain keyword filtering
+      if (seq === vectorSeq) { state.vectorPending = false; renderProviders(); }
     }
-  }, 250);
+  }, 300);
 }
 
 function renderProviders() {
@@ -807,7 +820,33 @@ function renderTaskDetail(id) {
 // 5. PROFILE PAGE & SETTINGS (CHOLOBD WORKSPACE & SETTINGS - SCREENSHOTS 1, 2, 3, 4)
 // ==========================================================================
 
+function renderProfileSidebar() {
+  const nameEl = $("#sidebar-name");
+  if (!nameEl) return;
+  const u = state.user;
+  const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
+  if (!u) {
+    nameEl.textContent = state.lang === "bn" ? "অতিথি" : "Guest";
+    set("#sidebar-avatar", "?"); set("#sidebar-headline", state.lang === "bn" ? "প্রোফাইল দেখতে লগইন করুন" : "Sign in to see your profile");
+    set("#metric-posts", 0); set("#metric-bids", 0); set("#metric-saved", 0);
+    return;
+  }
+  const roleLabel = u.role === "worker" ? (state.lang === "bn" ? "সেবাদাতা" : "Provider") : u.role === "admin" ? "Admin" : (state.lang === "bn" ? "গ্রাহক" : "Customer");
+  nameEl.textContent = u.name;
+  const av = $("#sidebar-avatar");
+  if (av) {
+    if (u.avatar_photo || u.avatar_url) { av.textContent = ""; const img = document.createElement("img"); img.alt = ""; img.src = u.avatar_photo || u.avatar_url; img.referrerPolicy = "no-referrer"; img.style.cssText = "width:100%;height:100%;border-radius:50%;object-fit:cover"; av.appendChild(img); }
+    else av.textContent = String(u.name || "?").trim().slice(0, 1).toUpperCase();
+  }
+  set("#sidebar-headline", `${roleLabel} · ${u.area || u.city || "Bangladesh"}`);
+  const isCustomer = u.role === "customer";
+  set("#metric-posts", state.jobs.filter((j) => j.customer_id === u.id).length);
+  set("#metric-bids", isCustomer ? state.jobs.filter((j) => j.customer_id === u.id && j.status !== "open").length : state.offers.filter((o) => o.worker_id === u.id).length);
+  set("#metric-saved", state.savedCount || 0);
+}
+
 function renderProfile() {
+  renderProfileSidebar();
   const root = $("#profile-workspace");
   if (!root) return;
 
@@ -2032,6 +2071,7 @@ function bindEvents() {
 
     const accept = event.target.closest("[data-accept-offer]");
     if (accept) {
+      if (window.ServiMoney) { window.ServiMoney.acceptOffer(Number(accept.dataset.acceptOffer)); return; }
       try {
         await post(`/api/offers/${accept.dataset.acceptOffer}/accept`, {});
         await reload();
@@ -2257,6 +2297,7 @@ function bindEvents() {
   ["#global-search-input", "#service-search", "#area-search", "#verified-filter", "#sort-filter"].forEach((sel) => {
     $(sel)?.addEventListener("input", () => {
       state.providerLimit = 24;
+      if (sel === "#service-search" || sel === "#global-search-input") triggerVectorSearch($(sel).value);
       renderProviders();
       if (sel === "#global-search-input") renderTasks();
     });
@@ -2692,6 +2733,7 @@ async function handleOtpReleaseSubmit(e) {
 }
 
 async function renderWalletSection() {
+  renderProfileSidebar();
   const container = $("#profile-workspace");
   if (!container) return;
 
@@ -2709,18 +2751,20 @@ async function renderWalletSection() {
           <p class="text-xs text-muted">${state.lang === "bn" ? "নিরাপদ লেনদেন ও তাত্ক্ষণিক ক্যাশআউট।" : "Secure transactions and simulated instant payouts."}</p>
         </div>
 
+        ${window.ServiMoney ? window.ServiMoney.walletBanner() : ""}
         <div class="wallet-grid">
           <div class="wallet-balance-card card-primary">
             <span class="wallet-label">${state.lang === "bn" ? "উপলব্ধ ব্যালেন্স" : "Available Balance"}</span>
             <span class="wallet-val">৳${balance.toLocaleString()}</span>
             <div class="wallet-actions-row">
+              <button class="button button-quiet text-xs text-white border border-white/30" id="topup-btn" type="button">
+                <i data-lucide="plus-circle"></i> ${state.lang === "bn" ? "টাকা যোগ করুন" : "Add money"}
+              </button>
               ${isWorker ? `
                 <button class="button button-quiet text-xs text-white border border-white/30" id="withdraw-btn" type="button">
                   <i data-lucide="arrow-up-right"></i> ${state.lang === "bn" ? "টাকা তুলুন (Withdraw)" : "Request Payout"}
                 </button>
-              ` : `
-                <span class="text-xs text-teal-100">Ready for task payments</span>
-              `}
+              ` : ``}
             </div>
           </div>
 
@@ -2740,11 +2784,12 @@ async function renderWalletSection() {
                 <select name="method" class="select-field">
                   <option value="bKash">bKash Personal</option>
                   <option value="Nagad">Nagad Personal</option>
+                  <option value="Rocket">Rocket Personal</option>
                 </select>
               </label>
               <label class="form-field">
                 <span>Phone</span>
-                <input type="text" name="phone" required placeholder="01712345678" value="${escapeHtml(state.user.phone || '')}">
+                <input type="text" name="phone" required placeholder="01712345678" value="${escapeHtml(state.user.phone || '')}" ${state.user.phone_verified ? "readonly" : ""} title="Payouts go only to your verified mobile number">
               </label>
               <label class="form-field">
                 <span>Amount (৳)</span>
