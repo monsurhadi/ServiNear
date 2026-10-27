@@ -10,9 +10,14 @@
     "start": "node server.js",
     "dev": "node server.js",
     "build:vercel": "node scripts/build-vercel.js",
-    "test": "node scripts/smoke-test.js && node scripts/money-test.js && node scripts/search-test.js"
+    "test": "node scripts/smoke-test.js && node scripts/money-test.js && node scripts/search-test.js && node scripts/email-test.js"
   },
   "dependencies": {
+    "nodemailer": "^6.10.1",
     "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "mailparser": "^3.12.4",
+    "smtp-server": "^3.21.1"
   }
 }

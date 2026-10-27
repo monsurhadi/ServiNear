@@ -13,6 +13,9 @@ const { createVectorService } = require("./lib/vector");
 const { createSmsSender, normalizeBdPhone } = require("./lib/sms");
 const { createOtpService } = require("./lib/otp");
 const { createGateway } = require("./lib/payments");
+const { createMailer } = require("./lib/mailer");
+const { render: renderEmail } = require("./lib/email-templates");
+const { createEmailService } = require("./lib/email");
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
@@ -263,6 +266,9 @@ ensureColumn("users", "google_id", "TEXT");
 ensureColumn("users", "status", "TEXT NOT NULL DEFAULT 'active'");
 ensureColumn("users", "last_login_at", "TEXT");
 ensureColumn("users", "avatar_url", "TEXT");
+ensureColumn("users", "reset_token", "TEXT");
+ensureColumn("users", "reset_expires", "INTEGER");
+db.exec("UPDATE users SET reset_token=NULL, reset_expires=NULL WHERE reset_token IS NOT NULL"); // legacy plaintext codes from the old reset flow
 const sms = createSmsSender();
 const otp = createOtpService({ db, sms, fail });
 // Default: required in production, but only once an SMS provider exists (otherwise nobody could ever verify).
@@ -271,6 +277,17 @@ function requirePhone(user, force = false) {
   if ((REQUIRE_PHONE || force) && !user.phone_verified) fail(403, "Verify your mobile number to continue.", { code: "phone_verification_required" });
 }
 const gateway = createGateway();
+const mailer = createMailer();
+function apiBase() {
+  const e = String(process.env.PUBLIC_API_URL || process.env.RENDER_EXTERNAL_URL || "").replace(/\/$/, "");
+  if (e) return e;
+  if (IS_PROD) throw new Error("PUBLIC_API_URL is not set, so email links cannot be built.");
+  return `http://localhost:${PORT}`;
+}
+const appBase = () => WEB_ORIGIN || apiBase();
+const mailService = createEmailService({ db, mailer, render: renderEmail, fail, apiBase, appBase, hashPassword: passwordHashAsync });
+if (!mailer.configured) console.warn("Email is OFF" + (mailer.problem ? " (" + mailer.problem + ")" : "") + ". Password reset and email notifications are unavailable. See .env.example.");
+else console.log(`Email provider: ${mailer.provider}, from ${mailer.from}`);
 const MIN_TOPUP = Number(process.env.MIN_TOPUP_BDT || 50), MAX_TOPUP = Number(process.env.MAX_TOPUP_BDT || 100000);
 function publicApiUrl(req) {
   const env = String(process.env.PUBLIC_API_URL || process.env.RENDER_EXTERNAL_URL || "").replace(/\/$/, "");
@@ -529,7 +546,7 @@ function ensureEnvAdmin() {
   if (pw.length < 14) { console.warn("ADMIN_PASSWORD must be at least 14 characters; admin not created."); return; }
   const existing = db.prepare("SELECT id FROM users WHERE email=?").get(email);
   if (!existing) {
-    db.prepare("INSERT INTO users(name,email,password_hash,role,verified,area) VALUES(?,?,?,?,1,'Dhaka')")
+    db.prepare("INSERT INTO users(name,email,password_hash,role,verified,area,email_verified) VALUES(?,?,?,?,1,'Dhaka',1)")
       .run("Platform Admin", email, passwordHash(pw), "admin");
     console.log("Created admin account for " + email);
   }
@@ -553,6 +570,8 @@ function currentUser(id) {
   delete u.google_id;
   delete u.reset_token;
   delete u.reset_expires;
+  delete u.reset_token;
+  delete u.reset_expires;
   try { u.skills = JSON.parse(u.skills || "[]"); } catch { u.skills = []; }
   return u;
 }
@@ -561,6 +580,7 @@ function notifyUser(userId, title, message, type = "system", link = null) {
     db.prepare("INSERT INTO notifications(user_id,title,message,type,link) VALUES(?,?,?,?,?)").run(userId, title, message, type, link);
     sendToUser(userId, { type: "notification", notification: { title, message, type, link, created_at: new Date().toISOString() } });
   } catch(e) { console.error("Notification error:", e); }
+  try { mailService.notify(userId, { title, message, type, link }); } catch(e) { console.error("Email notify error:", e.message); }
 }
 function auditLog(admin, action, entity, entityId, detail) {
   try { db.prepare("INSERT INTO audit_log(actor_id,actor_name,action,entity,entity_id,detail,ip) VALUES(?,?,?,?,?,?,?)")
@@ -767,7 +787,7 @@ async function settlePayment(tranId,kind,form) {
   return {status:risky?"review":"success",offer_id:row.offer_id};
 }
 const { createAdminApi } = require("./lib/admin");
-const adminApi = createAdminApi({ db, send, fail, requireUser, readBody, notifyUser, vectors, ensureWallet });
+const adminApi = createAdminApi({ db, send, fail, requireUser, readBody, notifyUser, vectors, ensureWallet, email: mailService });
 async function handleApi(req,res,url) {
   const user=getSession(req);
   if (url.pathname.startsWith("/api/admin/") && (await adminApi(req,res,url,user,ctxIp)) !== false) return;
@@ -826,11 +846,12 @@ async function handleApi(req,res,url) {
       const id=Number(result.lastInsertRowid);
       notifyUser(id, "Welcome to ServiNear!", "Your account is created. Explore local verified helpers and post your first task.", "system");
       if(role==="worker")indexWorker(db.prepare("SELECT * FROM users WHERE id=?").get(id));
+      try { mailService.sendVerification(db.prepare("SELECT id,name,email,email_verified FROM users WHERE id=?").get(id)); } catch(e) { console.error("Verification email error:", e.message); }
       return send(res,201,{user:currentUser(id)},{"Set-Cookie":setSession(id)});
     } catch(error) {if(String(error.message).includes("UNIQUE"))fail(409,"An account with that email already exists.");throw error;}
   }
   if(req.method==="GET"&&url.pathname==="/api/config") {
-    return send(res,200,{googleClientId:GOOGLE_CLIENT_ID||null,googleEnabled:Boolean(GOOGLE_CLIENT_ID)||(!IS_PROD&&process.env.GOOGLE_AUTH_MOCK==="1"),demo:SEED_DEMO,phoneVerification:sms.configured,requirePhone:REQUIRE_PHONE,payments:gateway.enabled?gateway.provider:null,minTopup:MIN_TOPUP,maxTopup:MAX_TOPUP});
+    return send(res,200,{googleClientId:GOOGLE_CLIENT_ID||null,googleEnabled:Boolean(GOOGLE_CLIENT_ID)||(!IS_PROD&&process.env.GOOGLE_AUTH_MOCK==="1"),demo:SEED_DEMO,phoneVerification:sms.configured,requirePhone:REQUIRE_PHONE,payments:gateway.enabled?gateway.provider:null,emailEnabled:mailer.configured,minTopup:MIN_TOPUP,maxTopup:MAX_TOPUP});
   }
   if(req.method==="POST"&&url.pathname==="/api/auth/google") {
     const lim=limiter.hit("google:"+ctxIp,20,15*60*1000);
@@ -843,46 +864,54 @@ async function handleApi(req,res,url) {
     if(rec){
       if(rec.status==="suspended")fail(403,"This account has been suspended. Please contact support.");
       if(rec.role==="admin"&&process.env.GOOGLE_ALLOW_ADMIN!=="1")fail(403,"Administrators must sign in with their password.");
-      db.prepare("UPDATE users SET google_id=?, avatar_url=COALESCE(avatar_url,?) WHERE id=?").run(g.sub,g.picture,rec.id);
+      db.prepare("UPDATE users SET google_id=?, avatar_url=COALESCE(avatar_url,?), email_verified=1 WHERE id=?").run(g.sub,g.picture,rec.id);
       return send(res,200,{user:currentUser(rec.id)},{"Set-Cookie":setSession(rec.id)});
     }
     const role=body.role==="worker"?"worker":"customer";
     const dummy=await passwordHashAsync(crypto.randomBytes(24).toString("hex"));
-    const result=db.prepare(`INSERT INTO users(name,email,password_hash,google_id,avatar_url,role,area,availability)
-      VALUES(?,?,?,?,?,?,'Dhaka','Available')`).run(String(g.name).slice(0,80),g.email,dummy,g.sub,g.picture,role);
+    const result=db.prepare(`INSERT INTO users(name,email,password_hash,google_id,avatar_url,role,area,availability,email_verified)
+      VALUES(?,?,?,?,?,?,'Dhaka','Available',1)`).run(String(g.name).slice(0,80),g.email,dummy,g.sub,g.picture,role);
     const id=Number(result.lastInsertRowid);
     notifyUser(id,"Welcome to ServiNear!","Your account is connected with Google.","system");
     if(role==="worker")indexWorker(db.prepare("SELECT * FROM users WHERE id=?").get(id));
     return send(res,201,{user:currentUser(id)},{"Set-Cookie":setSession(id)});
   }
+  // Password reset: the code is only ever delivered by email, never returned to the caller.
   if(req.method==="POST"&&url.pathname==="/api/auth/forgot-password") {
     const body=await readBody(req);
-    const email=String(body.email||"").trim().toLowerCase();
-    if(!email)fail(400,"Please enter your email address.");
-    const userRecord = db.prepare("SELECT id FROM users WHERE email=?").get(email);
-    if(!userRecord) {
-      return send(res,200,{ok:true,message:"If this email exists in our records, a reset code has been sent."});
-    }
-    const token = Math.floor(100000 + Math.random() * 900000).toString();
-    const expires = Date.now() + 60 * 60 * 1000;
-    db.prepare("UPDATE users SET reset_token=?, reset_expires=? WHERE id=?").run(token, expires, userRecord.id);
-    return send(res,200,{ok:true,message:"Password reset code generated.",reset_code:token});
+    return send(res,200,mailService.requestReset(body.email,ctxIp));
   }
   if(req.method==="POST"&&url.pathname==="/api/auth/reset-password") {
     const body=await readBody(req);
-    const email=String(body.email||"").trim().toLowerCase();
-    const code=String(body.code||body.token||"").trim();
-    const newPassword=String(body.password||"");
-    if(!email||!code||!newPassword)fail(400,"Email, reset code, and new password are required.");
-    if(newPassword.length<8)fail(400,"Password must be at least 8 characters.");
-    const userRecord = db.prepare("SELECT id, reset_token, reset_expires FROM users WHERE email=?").get(email);
-    if(!userRecord||userRecord.reset_token!==code||!userRecord.reset_expires||userRecord.reset_expires<Date.now()) {
-      fail(400,"Invalid or expired password reset code.");
-    }
-    db.prepare("UPDATE users SET password_hash=?, reset_token=NULL, reset_expires=NULL WHERE id=?").run(await passwordHashAsync(newPassword), userRecord.id);
-    notifyUser(userRecord.id, "Password Changed", "Your account password was successfully reset.", "security");
-    return send(res,200,{ok:true,message:"Password updated successfully. You can now log in."});
+    await mailService.confirmReset(body.email,body.code||body.token,body.password||body.new_password,ctxIp);
+    return send(res,200,{ok:true,message:"Password updated. Please sign in with your new password."});
   }
+
+  // --- Email: address verification, unsubscribe ---
+  if(req.method==="GET"&&url.pathname==="/api/email/verify") {
+    const ok=mailService.verifyToken(url.searchParams.get("token"));
+    res.writeHead(302,{Location:`${appBase()}/profile?email=${ok?"verified":"invalid"}`,"Cache-Control":"no-store"});return res.end();
+  }
+  if(req.method==="POST"&&url.pathname==="/api/email/resend-verification") {
+    requireUser(user);
+    if(user.email_verified) return send(res,200,{ok:true,already_verified:true});
+    if(!mailer.configured) fail(503,"Email is not available right now.");
+    const rl=limiter.hit("verify-resend:"+user.id,3,3600*1000);
+    if(!rl.allowed) fail(429,"You can request up to 3 confirmation emails per hour. Please check your inbox and spam folder.");
+    mailService.sendVerification(db.prepare("SELECT id,name,email,email_verified FROM users WHERE id=?").get(user.id));
+    return send(res,200,{ok:true});
+  }
+  if(url.pathname==="/api/email/unsubscribe"&&(req.method==="GET"||req.method==="POST")) {
+    const form=req.method==="POST"?await readForm(req):{};
+    const uid=url.searchParams.get("u")||form.u, tok=url.searchParams.get("t")||form.t;
+    const page=(status,title,body)=>{res.writeHead(status,{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-store"});return res.end(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${title}</title><style>body{font:16px/1.6 system-ui,sans-serif;background:#f4f1e8;color:#17242a;display:grid;place-items:center;min-height:100vh;margin:0}main{background:#fff;border:1px solid #e4dccb;border-radius:16px;padding:32px;max-width:420px;margin:16px}h1{font-size:22px;margin:0 0 10px}button{width:100%;padding:13px;border:0;border-radius:10px;background:#0e6b5c;color:#fff;font:700 15px system-ui;cursor:pointer;margin-top:14px}a{color:#0e6b5c}</style><main>${body}</main>`);};
+    if(!uid||!tok||!mailService.checkUnsub(uid,tok)) return page(400,"Invalid link","<h1>This link isn't valid</h1><p>It may be incomplete. You can change email preferences any time in <b>Profile &rarr; Settings</b>.</p>");
+    // GET only asks for confirmation (mail scanners pre-fetch links); POST, including RFC 8058 one-click, performs the change.
+    if(req.method==="GET") return page(200,"Unsubscribe",`<h1>Stop non-essential emails?</h1><p>You'll no longer get offer, task and message emails. Security and payment emails will still be sent.</p><form method="POST" action="/api/email/unsubscribe"><input type="hidden" name="u" value="${Number(uid)}"><input type="hidden" name="t" value="${String(tok).replace(/[^A-Za-z0-9_-]/g,"")}"><button>Unsubscribe</button></form>`);
+    mailService.unsubscribe(uid);
+    return page(200,"Unsubscribed","<h1>You're unsubscribed</h1><p>We won't send you non-essential emails anymore. You can turn them back on any time in <b>Profile &rarr; Settings</b>.</p>");
+  }
+
   if(req.method==="PATCH"&&url.pathname==="/api/profile") {
     requireUser(user);const body=await readBody(req);const name=validateText(body.name,"Name",2,80);const phone=validateText(body.phone,"Phone",5,30);const area=validateText(body.area,"Area",2,120);const address=String(body.address||"").trim().slice(0,220);
     const category=user.role==="worker"?validateText(body.category,"Service category",2,60):user.category;
@@ -1003,7 +1032,10 @@ async function handleApi(req,res,url) {
   if(req.method==="POST"&&url.pathname==="/api/support") {
     const body=await readBody(req);const name=validateText(body.name||user?.name,"Name",2,80);const email=String(body.email||user?.email||"").trim().toLowerCase();
     if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail(400,"Enter a valid email address.");const subject=validateText(body.subject,"Subject",4,120);const message=validateText(body.message,"Message",20,2000);
-    db.prepare("INSERT INTO support_tickets(user_id,name,email,subject,message) VALUES(?,?,?,?,?)").run(user?.id||null,name,email,subject,message);return send(res,201,{ok:true});
+    if(!limiter.hit("support:"+ctxIp,5,3600*1000).allowed)fail(429,"Too many requests. Please try again later.");
+    const ticket=db.prepare("INSERT INTO support_tickets(user_id,name,email,subject,message) VALUES(?,?,?,?,?)").run(user?.id||null,name,email,subject,message);
+    if(user&&user.email===email) mailService.enqueue({userId:user.id,to:email,kind:"ticket_received",category:"transactional",data:{name,subject,ticketId:Number(ticket.lastInsertRowid)}});
+    return send(res,201,{ok:true});
   }
   if(req.method==="GET"&&url.pathname==="/api/admin/summary") {
     requireUser(user,["admin"]);return send(res,200,{users:db.prepare("SELECT COUNT(*) AS count FROM users").get().count,providers:db.prepare("SELECT COUNT(*) AS count FROM users WHERE role='worker'").get().count,customers:db.prepare("SELECT COUNT(*) AS count FROM users WHERE role='customer'").get().count,openJobs:db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE status='open'").get().count,pending:db.prepare("SELECT COUNT(*) AS count FROM users WHERE role='worker' AND verified=0").get().count,tickets:db.prepare("SELECT COUNT(*) AS count FROM support_tickets WHERE status!='resolved'").get().count});
@@ -1426,6 +1458,7 @@ async function handleApi(req,res,url) {
     const notif_messages=body.notif_messages!==undefined?(body.notif_messages?1:0):user.notif_messages;
     const notif_all=body.notif_all!==undefined?(body.notif_all?1:0):user.notif_all;
     const notif_updates=body.notif_updates!==undefined?(body.notif_updates?1:0):user.notif_updates;
+    if(body.email_notifications!==undefined) db.prepare("UPDATE users SET email_notifications=? WHERE id=?").run(body.email_notifications?1:0,user.id);
     const notif_hire=body.notif_hire!==undefined?(body.notif_hire?1:0):user.notif_hire;
     const language=body.language!==undefined?String(body.language).trim():user.language;
 
@@ -1467,7 +1500,7 @@ const server=http.createServer(async(req,res)=>{
   headers["Cross-Origin-Opener-Policy"]="same-origin-allow-popups";
   Object.entries(headers).forEach(([key,value])=>res.setHeader(key,value));
   try {
-    const gatewayCallback=/^\/api\/payments\/(sslcommerz|mock)\/(success|fail|cancel|ipn|pay)$/.test(url.pathname);
+    const gatewayCallback=/^\/api\/payments\/(sslcommerz|mock)\/(success|fail|cancel|ipn|pay)$/.test(url.pathname)||/^\/api\/email\/(unsubscribe|verify)$/.test(url.pathname);
     if(url.pathname.startsWith("/api/")&&gatewayCallback) {
       if(req.method==="OPTIONS"){res.writeHead(204);return res.end();}
       const gl=limiter.hit("pay-cb:"+ctxIp,120,60*1000);

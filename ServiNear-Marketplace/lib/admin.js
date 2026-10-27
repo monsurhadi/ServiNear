@@ -1,7 +1,7 @@
 "use strict";
 // Admin control-plane API. Every route requires an authenticated admin and every write is audited.
 
-function createAdminApi({ db, send, fail, requireUser, readBody, notifyUser, vectors, ensureWallet }) {
+function createAdminApi({ db, send, fail, requireUser, readBody, notifyUser, vectors, ensureWallet, email }) {
   const num = (v, d, min, max) => {
     const n = v === null || v === undefined || String(v).trim() === "" ? NaN : Number(v);
     return Math.max(min, Math.min(max, Number.isFinite(n) ? Math.floor(n) : d));
@@ -237,6 +237,20 @@ function createAdminApi({ db, send, fail, requireUser, readBody, notifyUser, vec
       audit(user, "escrow." + em2[2], "escrow", es.id, { amount: es.amount, note }, ip);
       const to = em2[2] === "refund" ? es.customer_id : es.worker_id;
       notifyUser?.(to, em2[2] === "refund" ? "Escrow refunded" : "Escrow released", `৳${es.amount} for Task #${es.job_id}. ${note}`, "wallet");
+      return send(res, 200, { ok: true });
+    }
+
+    if (m === "GET" && p === "/api/admin/email") return send(res, 200, { ...email.stats(), outbox: email.list(100) });
+    if (m === "POST" && p === "/api/admin/email/test") {
+      const r = email.sendTest(user);
+      if (!r.queued) fail(400, r.reason === "not_configured" ? "No email provider is configured. Set EMAIL_PROVIDER and its credentials." : r.reason === "undeliverable_address" ? `Your account email (${user.email}) can't receive mail. Change it to a real address first.` : "The test email could not be queued.");
+      audit(user, "email.test", "email", r.id, null, ip);
+      return send(res, 200, { ok: true, id: r.id, to: user.email });
+    }
+    const emr = p.match(/^\/api\/admin\/email\/(\d+)\/retry$/);
+    if (m === "POST" && emr) {
+      if (!email.retry(Number(emr[1]))) fail(404, "Email not found.");
+      audit(user, "email.retry", "email", emr[1], null, ip);
       return send(res, 200, { ok: true });
     }
 

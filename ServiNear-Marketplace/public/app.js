@@ -1186,6 +1186,17 @@ function renderActiveSettingsTab() {
           </label>
         </div>
 
+        <div class="settings-switch-row">
+          <div class="settings-switch-info">
+            <strong>✉️ Email notifications</strong>
+            <p>${u.email_verified ? "Offers, accepted tasks and new messages by email. Receipts and security emails are always sent." : "Confirm your email address to receive offer and message emails."}</p>
+          </div>
+          <label class="switch-toggle">
+            <input type="checkbox" name="email_notifications" ${u.email_notifications !== false && u.email_notifications !== 0 ? "checked" : ""}>
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+
         <!-- Save Button -->
         <div class="settings-footer-actions mt-3">
           <button type="submit" class="settings-save-btn">
@@ -2201,30 +2212,35 @@ function bindEvents() {
     }
   });
 
-  // Forgot password form Step 1
+  // Forgot password: the code is delivered by email only.
+  let resetEmail = "";
+  const sendResetCode = async () => {
+    const res = await post("/api/auth/forgot-password", { email: resetEmail });
+    $("#forgot-sent-to").textContent = resetEmail;
+    $("#forgot-dev-hint").textContent = res.dev_code ? `Development mode: your code is ${res.dev_code}` : "";
+    $("#forgot-step1-form").classList.add("hidden");
+    $("#forgot-step2-form").classList.remove("hidden");
+    $("#forgot-code").focus();
+  };
   $("#forgot-step1-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const email = $("#forgot-email").value.trim();
-    try {
-      const res = await post("/api/auth/forgot-password", { email });
-      $("#forgot-preview-code").textContent = res.resetToken || "123456";
-      $("#forgot-step1-form").classList.add("hidden");
-      $("#forgot-step2-form").classList.remove("hidden");
-      toast("Reset code generated!");
-    } catch (error) {
-      showError($("#forgot-message"), error.message);
-    }
+    resetEmail = $("#forgot-email").value.trim().toLowerCase();
+    const btn = event.submitter; if (btn) btn.disabled = true;
+    try { await sendResetCode(); showError($("#forgot-message"), ""); } catch (error) { showError($("#forgot-message"), error.message); }
+    finally { if (btn) btn.disabled = false; }
   });
-
-  // Forgot password form Step 2
+  $("#forgot-resend")?.addEventListener("click", async () => {
+    try { await sendResetCode(); toast("If that email is registered, a new code is on its way."); } catch (error) { showError($("#forgot-message"), error.message); }
+  });
   $("#forgot-step2-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const code = $("#forgot-code").value.trim();
     const newPassword = $("#forgot-new-pass").value;
     try {
-      await post("/api/auth/reset-password", { token: code, new_password: newPassword });
+      await post("/api/auth/reset-password", { email: resetEmail, code, password: newPassword });
       $("#forgot-dialog")?.close();
-      toast("Password updated successfully! Please log in.");
+      $("#forgot-step2-form").reset(); $("#forgot-step2-form").classList.add("hidden"); $("#forgot-step1-form").classList.remove("hidden");
+      toast("Password updated. Please sign in with your new password.");
       openAuth("login");
     } catch (error) {
       showError($("#forgot-message"), error.message);

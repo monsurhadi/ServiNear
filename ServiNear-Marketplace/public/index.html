@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="/vendor/markercluster/MarkerCluster.css">
   <link rel="stylesheet" href="/vendor/markercluster/MarkerCluster.Default.css">
   <link rel="stylesheet" href="/styles.css?v=9">
-  <link rel="stylesheet" href="/finder.css?v=5">
+  <link rel="stylesheet" href="/finder.css?v=6">
 </head>
 <body>
   <header class="site-header">
@@ -804,7 +804,7 @@
       <button class="dialog-close icon-button" type="button" data-close-dialog aria-label="Close"><i data-lucide="x"></i></button>
       <p class="eyebrow">PASSWORD RECOVERY</p>
       <h2>Reset your password</h2>
-      <p class="dialog-copy">Enter your email and we will send a 6-digit verification code to set a new password.</p>
+      <p class="dialog-copy">Enter your email and we will email you a 6-digit code to set a new password.</p>
 
       <form id="forgot-step1-form">
         <label class="form-field">
@@ -816,18 +816,20 @@
 
       <form id="forgot-step2-form" class="hidden mt-3">
         <div class="code-sent-banner">
-          <span>Verification code generated!</span>
-          <strong id="forgot-preview-code">123456</strong>
+          <span>We emailed a 6-digit code to</span>
+          <strong id="forgot-sent-to"></strong>
         </div>
+        <p class="inline-message" id="forgot-dev-hint" style="color:var(--teal)"></p>
         <label class="form-field mt-2">
           <span>6-digit code</span>
-          <input name="code" id="forgot-code" required placeholder="123456" maxlength="6">
+          <input name="code" id="forgot-code" required inputmode="numeric" autocomplete="one-time-code" pattern="\d{6}" placeholder="123456" maxlength="6">
         </label>
         <label class="form-field mt-2">
           <span>New Password (8+ characters)</span>
-          <input name="new_password" id="forgot-new-pass" type="password" required minlength="8" placeholder="Enter new password">
+          <input name="new_password" id="forgot-new-pass" type="password" required minlength="8" autocomplete="new-password" placeholder="Enter new password">
         </label>
         <button class="button button-rust full-width mt-3" type="submit">Update Password</button>
+        <button class="button button-quiet full-width mt-2" id="forgot-resend" type="button">Didn't get it? Send a new code</button>
       </form>
       <p class="inline-message" id="forgot-message" role="status"></p>
     </div>
@@ -1155,8 +1157,9 @@
   <script src="/vendor/markercluster/leaflet.markercluster.js"></script>
   <script src="/vendor/lucide.min.js"></script>
   <script src="/runtime-config.js?v=3"></script>
-  <script src="/app.js?v=16"></script>
+  <script src="/app.js?v=17"></script>
   <script src="/finder.js?v=6"></script>
   <script src="/money.js?v=3"></script>
+  <script src="/email.js?v=1"></script>
 </body>
 </html>
