@@ -25,3 +25,20 @@ jobs:
         run: npm test
       - name: Static build
         run: SERVINEAR_API_BASE=https://api.example.com npm run build:vercel
+  ui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ServiNear-Marketplace
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ServiNear-Marketplace/package-lock.json
+      - run: npm ci
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: UI quality gate (accessibility, layout, language, keyboard)
+        run: npm run test:ui

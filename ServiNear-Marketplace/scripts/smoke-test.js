@@ -28,6 +28,16 @@ const cookieOf = (r) => (r.headers.get("set-cookie") || "").split(";")[0];
   ok("admin can suspend a user", sus.ok);
   ok("suspended session is rejected", (await (await j("/api/bootstrap", {}, cookieOf(g))).json()).user === null);
   ok("admin cannot demote self", (await j("/api/admin/users/1", { method: "PATCH", body: JSON.stringify({ role: "customer" }) }, admin)).status === 400);
+  // change password
+  const pw = await j("/api/auth/register", { method: "POST", body: JSON.stringify({ first_name: "Pat", surname: "Word", email: "pat@example.com", password: "OldPassw0rd!x", role: "customer", gender: "male", city: "Dhaka", occupation: "tester", phone: "01711111111", area: "Dhaka", address: "House 1, Road 2" }) });
+  const sess1 = cookieOf(pw);
+  const sess2 = cookieOf(await j("/api/auth/login", { method: "POST", body: JSON.stringify({ email: "pat@example.com", password: "OldPassw0rd!x" }) }));
+  ok("change-password requires sign-in", (await j("/api/auth/change-password", { method: "POST", body: JSON.stringify({ current_password: "a", new_password: "NewPassw0rd!x" }) })).status === 401);
+  ok("wrong current password is rejected", (await j("/api/auth/change-password", { method: "POST", body: JSON.stringify({ current_password: "nope-nope-1", new_password: "NewPassw0rd!x" }) }, sess1)).status === 400);
+  ok("weak new password is rejected", (await j("/api/auth/change-password", { method: "POST", body: JSON.stringify({ current_password: "OldPassw0rd!x", new_password: "short" }) }, sess1)).status === 400);
+  ok("correct current password changes it", (await j("/api/auth/change-password", { method: "POST", body: JSON.stringify({ current_password: "OldPassw0rd!x", new_password: "NewPassw0rd!x" }) }, sess1)).status === 200);
+  ok("new password works and old one does not", (await j("/api/auth/login", { method: "POST", body: JSON.stringify({ email: "pat@example.com", password: "NewPassw0rd!x" }) })).status === 200 && (await j("/api/auth/login", { method: "POST", body: JSON.stringify({ email: "pat@example.com", password: "OldPassw0rd!x" }) })).status === 401);
+  ok("other devices are signed out, this one stays in", (await (await j("/api/bootstrap", {}, sess2)).json()).user === null && (await (await j("/api/bootstrap", {}, sess1)).json()).user !== null);
   let limited = false;
   for (let i = 0; i < 12; i++) if ((await j("/api/auth/login", { method: "POST", body: JSON.stringify({ email: "nobody@x.com", password: "bad" }) })).status === 429) limited = true;
   ok("login brute-force is rate limited", limited);

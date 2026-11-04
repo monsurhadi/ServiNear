@@ -53,6 +53,6 @@
   (async () => {
     try { cfg = await api("/api/config"); } catch {}
     addVerifyChip(); handleReturn();
-    const t = setInterval(() => { if (state.user) { clearInterval(t); addVerifyChip(); } }, 400); setTimeout(() => clearInterval(t), 12000);
+    const pollTimer = setInterval(() => { if (state.user) { clearInterval(pollTimer); addVerifyChip(); } }, 400); setTimeout(() => clearInterval(pollTimer), 12000);
   })();
 })();

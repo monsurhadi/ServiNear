@@ -3,16 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#0e6b5c">
+  <meta name="theme-color" content="#0b6b5d">
   <meta name="description" content="Find nearby local service professionals, post a task, chat directly and compare offers.">
   <title>ServiNear | Bangladesh's Local Services Community</title>
+  <link rel="preload" href="/vendor/fonts/hind-latin-400.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/vendor/fonts/anek-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/vendor/fonts/fonts.css?v=1">
   <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
   <link rel="stylesheet" href="/vendor/markercluster/MarkerCluster.css">
   <link rel="stylesheet" href="/vendor/markercluster/MarkerCluster.Default.css">
   <link rel="stylesheet" href="/styles.css?v=9">
-  <link rel="stylesheet" href="/finder.css?v=6">
+  <link rel="stylesheet" href="/finder.css?v=8">
+  <link rel="stylesheet" href="/design.css?v=15">
 </head>
 <body>
+  <a class="skip-link" href="#main" data-i18n="skipLink">Skip to main content</a>
   <header class="site-header">
     <div class="utility-bar">
       <div class="utility-left">
@@ -88,7 +93,7 @@
     </div>
   </header>
 
-  <main class="page-shell">
+  <main class="page-shell" id="main" tabindex="-1">
     <!-- Discover / Home View -->
     <section class="page-view" id="page-discover" data-page="discover">
       <div class="home-heading">
@@ -100,8 +105,8 @@
         <div class="home-proof">
           <i data-lucide="badge-check"></i>
           <span>
-            <strong data-i18n="proofTitle">100% ID Verified Trades</strong>
-            <small data-i18n="proofDesc">Government NID verified providers with zero platform markup.</small>
+            <strong data-i18n="proofTitle">Verified providers, clearly marked</strong>
+            <small data-i18n="proofDesc">Providers who pass an NID check carry a gold seal. Your payment stays in escrow until the job is done.</small>
           </span>
         </div>
       </div>
@@ -111,8 +116,8 @@
         <div class="finder-panel">
           <form class="finder-search" id="finder-form" role="search">
             <h2 class="finder-title" data-i18n="finderTitle">Find a pro <em>near you</em></h2>
-            <label class="finder-field"><i data-lucide="search"></i><span><small data-i18n="finderService">Service</small><input id="service-search" type="search" placeholder="AC repair, electrician, plumber…" autocomplete="off"></span></label>
-            <label class="finder-field"><i data-lucide="map-pin"></i><span><small data-i18n="finderArea">Area</small><input id="area-search" type="search" placeholder="Dhanmondi, Mirpur, Uttara…" autocomplete="off"></span></label>
+            <label class="finder-field"><i data-lucide="search"></i><span><small data-i18n="finderService">Service</small><input id="service-search" type="search" data-i18n-placeholder="finderServicePh" placeholder="AC repair, electrician, plumber…" autocomplete="off"></span></label>
+            <label class="finder-field"><i data-lucide="map-pin"></i><span><small data-i18n="finderArea">Area</small><input id="area-search" type="search" data-i18n-placeholder="finderAreaPh" placeholder="Dhanmondi, Mirpur, Uttara…" autocomplete="off"></span></label>
             <div class="finder-actions">
               <button class="button button-teal" type="submit"><i data-lucide="search"></i> <span data-i18n="finderSearch">Search</span></button>
               <button class="button button-outline" type="button" id="locate-button"><i data-lucide="locate-fixed"></i> <span data-i18n="nearMeBtn">Near me</span></button>
@@ -122,35 +127,54 @@
           <div class="finder-list-wrap">
             <div class="finder-bar">
               <strong id="finder-count" aria-live="polite">Loading professionals…</strong>
-              <label class="toggle-control"><input id="bounds-toggle" type="checkbox"><span class="toggle-track"></span><span>Only in map view</span></label>
+              <label class="toggle-control"><input id="bounds-toggle" type="checkbox"><span class="toggle-track"></span><span data-i18n="finderInView">Only in map view</span></label>
             </div>
-            <div class="finder-results" id="finder-results"></div>
+            <div class="finder-filters">
+            <label class="toggle-control">
+              <input id="verified-filter" type="checkbox" checked>
+              <span class="toggle-track"></span>
+              <span data-i18n="filterVerifiedOnly">NID Verified only</span>
+            </label>
+            <select id="sort-filter" aria-label="Sort professionals">
+              <option value="recommended" data-i18n="sortRecommended">Recommended</option>
+              <option value="distance" data-i18n="sortNearest">Nearest</option>
+              <option value="rating" data-i18n="sortTopRated">Top rated</option>
+              <option value="price" data-i18n="sortLowestPrice">Lowest rate</option>
+            </select>
+          </div>
+            <div class="finder-results" id="finder-results" aria-busy="true">
+<div class="fr fr-skel" aria-hidden="true"><div class="skel skel-av"></div><div class="skel-lines"><div class="skel skel-l1"></div><div class="skel skel-l2"></div></div></div>
+<div class="fr fr-skel" aria-hidden="true"><div class="skel skel-av"></div><div class="skel-lines"><div class="skel skel-l1"></div><div class="skel skel-l2"></div></div></div>
+<div class="fr fr-skel" aria-hidden="true"><div class="skel skel-av"></div><div class="skel-lines"><div class="skel skel-l1"></div><div class="skel skel-l2"></div></div></div>
+<div class="fr fr-skel" aria-hidden="true"><div class="skel skel-av"></div><div class="skel-lines"><div class="skel skel-l1"></div><div class="skel skel-l2"></div></div></div>
+<div class="fr fr-skel" aria-hidden="true"><div class="skel skel-av"></div><div class="skel-lines"><div class="skel skel-l1"></div><div class="skel skel-l2"></div></div></div>
+            </div>
           </div>
         </div>
         <div class="finder-map-wrap">
           <div id="service-map" role="application" aria-label="Map of service providers"></div>
           <div class="map-controls">
-            <button class="map-btn" type="button" id="map-fit"><i data-lucide="maximize"></i><span>Show all</span></button>
-            <button class="map-btn" type="button" id="map-recenter"><i data-lucide="crosshair"></i><span>Reset view</span></button>
+            <button class="map-btn" type="button" id="map-fit" data-i18n-label="fx_show_all" aria-label="Show all"><i data-lucide="maximize"></i><span data-i18n="fx_show_all">Show all</span></button>
+            <button class="map-btn" type="button" id="map-recenter" data-i18n-label="fx_reset" aria-label="Reset view"><i data-lucide="crosshair"></i><span data-i18n="fx_reset">Reset view</span></button>
           </div>
           <aside class="route-panel hidden" id="route-panel" aria-label="Directions">
             <div class="route-head">
-              <div><small>Directions to</small><strong id="route-dest"></strong></div>
+              <div><small data-i18n="fx_dir_to">Directions to</small><strong id="route-dest"></strong></div>
               <button class="route-close" type="button" id="route-close" aria-label="Close directions"><i data-lucide="x"></i></button>
             </div>
             <form class="route-form" id="route-form">
               <label class="route-input"><i data-lucide="circle-dot"></i><input id="route-from" placeholder="Your starting point (address or area)" autocomplete="off"></label>
               <div class="route-tools">
-                <button type="button" id="route-locate">My location</button>
-                <button type="button" id="route-pick">Pin on map</button>
-                <button type="submit" class="go">Get route</button>
+                <button type="button" id="route-locate" data-i18n="fx_my_loc">My location</button>
+                <button type="button" id="route-pick" data-i18n="fx_pin">Pin on map</button>
+                <button type="submit" class="go" data-i18n="fx_route">Get route</button>
               </div>
             </form>
             <div id="route-summary"></div>
             <ol id="route-steps"></ol>
             <p class="route-msg" id="route-msg" role="status"></p>
           </aside>
-          <span class="map-attrib-note">GPS is only used when you tap “Near me” or “My location”.</span>
+          <span class="map-attrib-note" data-i18n="fx_gps_note">GPS is only used when you tap “Near me” or “My location”.</span>
         </div>
       </section>
 
@@ -186,26 +210,14 @@
       </div>
       <div class="category-featured" id="featured-categories"></div>
 
-      <section class="discover-section">
+      <section class="discover-section" hidden aria-hidden="true">
         <div class="section-heading">
           <div>
             <p class="eyebrow" data-i18n="proListEyebrow">LOCAL VERIFIED TRADES</p>
             <h2 data-i18n="proListTitle">Local professionals</h2>
             <p id="provider-summary" data-i18n="proListSummary">Browse trusted service providers nearby.</p>
           </div>
-          <div class="filter-tools">
-            <label class="toggle-control">
-              <input id="verified-filter" type="checkbox" checked>
-              <span class="toggle-track"></span>
-              <span data-i18n="filterVerifiedOnly">NID Verified only</span>
-            </label>
-            <select id="sort-filter" aria-label="Sort professionals">
-              <option value="recommended" data-i18n="sortRecommended">Recommended</option>
-              <option value="distance" data-i18n="sortNearest">Nearest</option>
-              <option value="rating" data-i18n="sortTopRated">Top rated</option>
-              <option value="price" data-i18n="sortLowestPrice">Lowest rate</option>
-            </select>
-          </div>
+          
         </div>
         <div class="provider-list" id="provider-list"></div>
         <button class="button button-outline load-more hidden" id="provider-more" data-i18n="showMorePros">Show more professionals</button>
@@ -214,6 +226,15 @@
           <strong data-i18n="emptyProsTitle">No providers match those filters</strong>
           <span data-i18n="emptyProsSub">Try a different service, clear filters or change area.</span>
         </div>
+      </section>
+
+      <section class="steps" aria-labelledby="steps-title">
+        <h2 id="steps-title" data-i18n="stepsTitle">How ServiNear works</h2>
+        <ol class="steps-list">
+          <li><span class="step-n" aria-hidden="true">1</span><div><strong data-i18n="step1T">Search or post a task</strong><p data-i18n="step1D">Find a verified pro near you on the map, or describe the job and let offers come to you.</p></div></li>
+          <li><span class="step-n" aria-hidden="true">2</span><div><strong data-i18n="step2T">Compare and choose</strong><p data-i18n="step2D">Compare prices, ratings and verified seals. Chat first. Pick the person you trust.</p></div></li>
+          <li><span class="step-n" aria-hidden="true">3</span><div><strong data-i18n="step3T">Pay safely, release when done</strong><p data-i18n="step3D">Your money is held in escrow. Share the completion code only when the work is finished.</p></div></li>
+        </ol>
       </section>
 
 
@@ -313,10 +334,10 @@
             </div>
           </div>
           <div class="inbox-conversations-list" id="inbox-conversations">
-            <div class="inbox-empty-notice" data-i18n="noChatsYet">
+            <div class="inbox-empty-notice">
               <i data-lucide="message-square-off"></i>
-              <p>No conversations yet.</p>
-              <small>Open someone's profile and tap Message to start.</small>
+              <p data-i18n="noChatsTitle">No conversations yet.</p>
+              <small data-i18n="noChatsHint">Open someone's profile and tap Message to start.</small>
             </div>
           </div>
         </aside>
@@ -325,7 +346,7 @@
         <div class="inbox-chat-pane" id="inbox-chat-pane">
           <div class="inbox-placeholder" id="inbox-chat-empty">
             <i data-lucide="message-circle-more"></i>
-            <h3 data-i18n="selectChatTitle">Select a conversation to start chatting</h3>
+            <h2 data-i18n="selectChatTitle">Select a conversation to start chatting</h2>
             <p data-i18n="selectChatSub">Connect with clients and service providers in real-time.</p>
           </div>
 
@@ -367,8 +388,8 @@
         <p data-i18n="savedSub">Review all the tasks and service providers you bookmarked for later.</p>
       </div>
       <div class="saved-tabs">
-        <button class="saved-tab active" data-saved-tab="jobs" type="button" data-i18n="savedTasksTab">Saved Tasks (<span id="saved-jobs-count">0</span>)</button>
-        <button class="saved-tab" data-saved-tab="workers" type="button" data-i18n="savedWorkersTab">Saved Professionals (<span id="saved-workers-count">0</span>)</button>
+        <button class="saved-tab active" data-saved-tab="jobs" type="button"><span data-i18n="savedTasksLabel">Saved Tasks</span> (<span id="saved-jobs-count">0</span>)</button>
+        <button class="saved-tab" data-saved-tab="workers" type="button"><span data-i18n="savedWorkersLabel">Saved Professionals</span> (<span id="saved-workers-count">0</span>)</button>
       </div>
       <div class="saved-content">
         <div class="task-list" id="saved-jobs-list"></div>
@@ -542,7 +563,7 @@
           </details>
           <details>
             <summary data-i18n="faq4Q">Is payment handled in the app?</summary>
-            <p data-i18n="faq4A">No. Customers pay providers directly via bKash, Nagad, or Cash on completion with zero commission deductions.</p>
+            <p data-i18n="faq4A">Yes. Top up your wallet with bKash, Nagad, Rocket or a card. When you accept an offer, the price is held in escrow and released to the provider only after the job is done.</p>
           </details>
         </aside>
       </div>
@@ -573,23 +594,59 @@
         </div>
       </div>
     </section>
+
+      <section class="page-view hidden" id="page-how" data-page="how">
+        <div class="editorial-heading">
+          <p class="eyebrow" data-i18n="howEyebrow">How it works</p>
+          <h1 data-i18n="howTitle">Hire safely, in three steps</h1>
+          <p data-i18n="howSub">Whether you need a fan repaired today or a bathroom renovated, the process is the same.</p>
+        </div>
+        <h2 class="how-h" data-i18n="howCustomers">If you need work done</h2>
+        <ol class="steps-list">
+          <li><span class="step-n" aria-hidden="true">1</span><div><strong data-i18n="step1T">Search or post a task</strong><p data-i18n="step1D">Find a verified pro near you on the map, or describe the job and let offers come to you.</p></div></li>
+          <li><span class="step-n" aria-hidden="true">2</span><div><strong data-i18n="step2T">Compare and choose</strong><p data-i18n="step2D">Compare prices, ratings and verified seals. Chat first. Pick the person you trust.</p></div></li>
+          <li><span class="step-n" aria-hidden="true">3</span><div><strong data-i18n="step3T">Pay safely, release when done</strong><p data-i18n="step3D">Your money is held in escrow. Share the completion code only when the work is finished.</p></div></li>
+        </ol>
+        <h2 class="how-h" data-i18n="howProviders">If you offer a service</h2>
+        <ol class="steps-list">
+          <li><span class="step-n" aria-hidden="true">1</span><div><strong data-i18n="prov1T">Build a trusted profile</strong><p data-i18n="prov1D">Add your skills, area and rate. Complete NID verification to earn the gold seal customers look for.</p></div></li>
+          <li><span class="step-n" aria-hidden="true">2</span><div><strong data-i18n="prov2T">Send clear offers</strong><p data-i18n="prov2D">Reply to tasks with a fair price and when you can come. Say whether parts are included.</p></div></li>
+          <li><span class="step-n" aria-hidden="true">3</span><div><strong data-i18n="prov3T">Get paid reliably</strong><p data-i18n="prov3D">The money is secured in escrow before you start. When the customer shares the completion code, it reaches your wallet and you can withdraw to bKash, Nagad or Rocket.</p></div></li>
+        </ol>
+        <h2 class="how-h" data-i18n="howSafety">How we keep you safe</h2>
+        <ul class="safety-grid">
+          <li><span class="seal" aria-hidden="true"><i data-lucide="lock"></i></span><strong data-i18n="safe1T">Escrow protects both sides</strong><p data-i18n="safe1D">Customers pay up front into escrow. Providers know the money is real. Nobody is paid until the job is done.</p></li>
+          <li><span class="seal" aria-hidden="true"><i data-lucide="check"></i></span><strong data-i18n="safe2T">Verified seals</strong><p data-i18n="safe2D">A gold seal means our team checked the provider's National ID and a live selfie. Unverified profiles are clearly unmarked.</p></li>
+          <li><span class="seal" aria-hidden="true"><i data-lucide="eye-off"></i></span><strong data-i18n="safe3T">Private by default</strong><p data-i18n="safe3D">Your phone number and exact address stay hidden until you accept a provider's offer.</p></li>
+        </ul>
+        <div class="how-cta"><a class="button button-teal" href="/" data-route data-i18n="ctaFind">Find a professional</a><button class="button button-rust" type="button" data-open-job data-i18n="ctaPost">Post a task</button></div>
+      </section>
   </main>
 
   <!-- Footer -->
   <footer class="site-footer">
-    <div class="footer-left">
-      <a class="brand footer-brand" href="/" data-route>
-        <span class="brand-stamp"><i data-lucide="map-pin"></i></span>
-        <span>Servi<em>Near</em></span>
-      </a>
-      <p class="footer-copy">© 2026 ServiNear · Bangladesh's Independent Community Network</p>
+    <div class="footer-cols">
+      <div class="footer-brandline">
+        <a class="brand footer-brand" href="/" data-route aria-label="ServiNear home"><span class="brand-stamp"><i data-lucide="map-pin"></i></span><span>Servi<em>Near</em></span></a>
+        <p data-i18n="footerTagline">Find verified local tradespeople near you, agree a price, and pay safely through escrow.</p>
+      </div>
+      <nav aria-labelledby="f-market"><h2 id="f-market" data-i18n="footerMarket">Marketplace</h2><ul>
+        <li><a href="/" data-route data-i18n="footerFind">Find a professional</a></li>
+        <li><a href="/jobs" data-route data-i18n="footerRequests">Help requests</a></li>
+        <li><a href="/categories" data-route data-i18n="footerCategories">All categories</a></li>
+      </ul></nav>
+      <nav aria-labelledby="f-learn"><h2 id="f-learn" data-i18n="footerLearn">Learn</h2><ul>
+        <li><a href="/how-it-works" data-route data-i18n="footerHow">How it works</a></li>
+        <li><a href="/about" data-route data-i18n="footerAbout">About ServiNear</a></li>
+        <li><a href="/help" data-route data-i18n="footerHelp">Help and support</a></li>
+      </ul></nav>
+      <nav aria-labelledby="f-acct"><h2 id="f-acct" data-i18n="footerAccount">Your account</h2><ul>
+        <li><a href="/profile" data-route data-i18n="footerProfile">Profile and wallet</a></li>
+        <li><a href="/inbox" data-route data-i18n="footerInbox">Messages</a></li>
+        <li><a href="/saved" data-route data-i18n="footerSaved">Saved</a></li>
+      </ul></nav>
     </div>
-    <div class="footer-links">
-      <a href="/about" data-route data-i18n="footerAbout">About</a>
-      <a href="/categories" data-route data-i18n="footerCategories">Categories</a>
-      <a href="/jobs" data-route data-i18n="footerTasks">Help Requests</a>
-      <a href="/help" data-route data-i18n="footerHelpline">Helpline</a>
-    </div>
+    <div class="footer-bottom"><span>&copy; 2026 ServiNear. <span data-i18n="footerMade">Made in Bangladesh.</span></span><span data-i18n="footerEscrow">Payments are held in escrow until the job is done.</span></div>
   </footer>
 
   <!-- ================= DIALOGS & MODALS ================= -->
@@ -631,17 +688,7 @@
           </div>
         </div>
 
-        <div class="app-badge-box">
-          <div class="app-badge-text">
-            <strong>Get the mobile app</strong>
-            <small>Download ServiNear on Android</small>
-          </div>
-          <div class="google-play-pill">
-            <span>GET IT ON</span>
-            <strong>Google Play</strong>
-          </div>
         </div>
-      </div>
 
       <!-- Right Form Panel -->
       <div class="split-auth-form-wrap">
@@ -1079,8 +1126,8 @@
     <button class="ai-chat-trigger-btn" id="ai-chat-trigger" type="button" aria-label="Open ServiNear AI Assistant" title="ServiNear AI Helper">
       <div class="ai-btn-pulse"></div>
       <i data-lucide="sparkles" class="ai-icon-sparkle"></i>
-      <span class="ai-btn-label">AI Helper</span>
-      <span class="ai-badge-live">LIVE</span>
+      <span class="ai-btn-label" data-i18n="aiHelper">AI Helper</span>
+      <span class="ai-badge-live" data-i18n="aiLive">LIVE</span>
     </button>
 
     <div class="ai-chat-window hidden" id="ai-chat-window" role="dialog" aria-label="ServiNear Customer Care AI">
@@ -1157,9 +1204,11 @@
   <script src="/vendor/markercluster/leaflet.markercluster.js"></script>
   <script src="/vendor/lucide.min.js"></script>
   <script src="/runtime-config.js?v=3"></script>
-  <script src="/app.js?v=17"></script>
-  <script src="/finder.js?v=6"></script>
+  <script src="/i18n.js?v=6"></script>
+  <script src="/app.js?v=24"></script>
+  <script src="/finder.js?v=11"></script>
   <script src="/money.js?v=3"></script>
-  <script src="/email.js?v=1"></script>
+  <script src="/email.js?v=2"></script>
+  <script src="/ux.js?v=2"></script>
 </body>
 </html>

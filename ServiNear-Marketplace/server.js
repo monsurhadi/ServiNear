@@ -887,6 +887,24 @@ async function handleApi(req,res,url) {
     return send(res,200,{ok:true,message:"Password updated. Please sign in with your new password."});
   }
 
+  if(req.method==="POST"&&url.pathname==="/api/auth/change-password") {
+    requireUser(user);
+    const rl=limiter.hit("chgpw:"+user.id,5,15*60*1000);
+    if(!rl.allowed){res.setHeader("Retry-After",rl.retryAfter);fail(429,"Too many attempts. Please wait a few minutes.");}
+    const body=await readBody(req);
+    const current=String(body.current_password||""), next=String(body.new_password||"");
+    if(next.length<8) fail(400,"New password must be at least 8 characters.");
+    if(next===current) fail(400,"Choose a password that is different from your current one.");
+    const rec=db.prepare("SELECT password_hash FROM users WHERE id=?").get(user.id);
+    if(!(await checkPasswordAsync(current,rec.password_hash))) fail(400,"Your current password is incorrect.");
+    const hash=await passwordHashAsync(next);
+    const token=parseCookies(req.headers.cookie).servinear_session;
+    db.prepare("UPDATE users SET password_hash=? WHERE id=?").run(hash,user.id);
+    db.prepare("DELETE FROM sessions WHERE user_id=? AND token_hash<>?").run(user.id,token?hashToken(token):"");
+    try { mailService.enqueue({userId:user.id,to:user.email,kind:"password_changed",category:"transactional",data:{name:user.name,when:new Date().toUTCString(),url:appBase()+"/"}}); } catch(e) { console.error("Password-changed email error:",e.message); }
+    return send(res,200,{ok:true,message:"Password updated. Other devices were signed out."});
+  }
+
   // --- Email: address verification, unsubscribe ---
   if(req.method==="GET"&&url.pathname==="/api/email/verify") {
     const ok=mailService.verifyToken(url.searchParams.get("token"));
@@ -1491,7 +1509,31 @@ async function handleApi(req,res,url) {
   return send(res,404,{message:"That API route was not found."});
 }
 
-function contentType(file) { return ({".html":"text/html; charset=utf-8",".css":"text/css; charset=utf-8",".js":"text/javascript; charset=utf-8",".png":"image/png",".jpg":"image/jpeg",".svg":"image/svg+xml",".webp":"image/webp"})[path.extname(file)]||"application/octet-stream"; }
+function contentType(file) { return ({".html":"text/html; charset=utf-8",".css":"text/css; charset=utf-8",".js":"text/javascript; charset=utf-8",".json":"application/json; charset=utf-8",".png":"image/png",".jpg":"image/jpeg",".svg":"image/svg+xml",".webp":"image/webp",".ico":"image/x-icon",".woff2":"font/woff2",".woff":"font/woff",".txt":"text/plain; charset=utf-8"})[path.extname(file)]||"application/octet-stream"; }
+const zlib = require("node:zlib");
+const COMPRESSIBLE = /\.(html|css|js|json|svg|txt)$/;
+const compressedCache = new Map(); // "file|mtime|encoding" -> Buffer, so each asset is compressed once per change
+function sendStatic(req, res, file) {
+  const st = fs.statSync(file), ext = path.extname(file), vendor = file.includes(path.sep + "vendor" + path.sep);
+  const headers = { "Content-Type": contentType(file), Vary: "Accept-Encoding",
+    "Cache-Control": ext === ".html" ? "no-cache" : vendor ? "public, max-age=2592000" : "public, max-age=3600" };
+  const accept = String(req.headers["accept-encoding"] || "");
+  const enc = COMPRESSIBLE.test(file) && st.size > 1024 ? (/\bbr\b/.test(accept) ? "br" : /\bgzip\b/.test(accept) ? "gzip" : null) : null;
+  if (enc) {
+    const key = `${file}|${st.mtimeMs}|${enc}`;
+    let buf = compressedCache.get(key);
+    if (!buf) {
+      const raw = fs.readFileSync(file);
+      buf = enc === "br" ? zlib.brotliCompressSync(raw, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 } }) : zlib.gzipSync(raw, { level: 6 });
+      compressedCache.set(key, buf);
+    }
+    res.writeHead(200, { ...headers, "Content-Encoding": enc, "Content-Length": buf.length });
+    return req.method === "HEAD" ? res.end() : res.end(buf);
+  }
+  res.writeHead(200, { ...headers, "Content-Length": st.size });
+  if (req.method === "HEAD") return res.end();
+  fs.createReadStream(file).pipe(res);
+}
 const server=http.createServer(async(req,res)=>{
   const url=new URL(req.url,`http://${req.headers.host||"localhost"}`);
   ctxIp=limiter.clientIp(req,TRUST_PROXY);ctxUa=req.headers["user-agent"];
@@ -1529,11 +1571,10 @@ const server=http.createServer(async(req,res)=>{
     const decoded=decodeURIComponent(url.pathname==="/"?"/index.html":url.pathname);const file=path.resolve(PUBLIC_DIR,`.${decoded}`);
     if(!file.startsWith(PUBLIC_DIR+path.sep)&&file!==path.join(PUBLIC_DIR,"index.html"))return send(res,403,{message:"Forbidden."});
     if(/^\/admin\/?$/.test(url.pathname)){res.writeHead(200,{"Content-Type":"text/html; charset=utf-8","Cache-Control":"no-cache"});return res.end(fs.readFileSync(path.join(PUBLIC_DIR,"admin.html")));}
-    const appRoute=/^\/(categories|jobs|hot-offers|about|how-it-works|help|profile|tasks\/\d+)\/?$/.test(url.pathname);
+    const appRoute=/^\/(categories|jobs|hot-offers|about|how-it-works|help|profile|inbox|saved|tasks\/\d+)\/?$/.test(url.pathname);
     const actual=fs.existsSync(file)&&fs.statSync(file).isFile()?file:appRoute?path.join(PUBLIC_DIR,"index.html"):null;
     if(!actual)return send(res,404,{message:"Not found."});
-    res.writeHead(200,{"Content-Type":contentType(actual),"Cache-Control":actual.endsWith(".html")?"no-cache":"public, max-age=3600"});
-    if(req.method==="HEAD")return res.end();fs.createReadStream(actual).pipe(res);
+    return sendStatic(req,res,actual);
   } catch(error) {
     if(res.headersSent)return res.end();const status=error.status||500;if(status===500)console.error(error);send(res,status,{message:status===500?"The request could not be completed.":error.message,...(status<500&&error.extra?error.extra:{})});
   }

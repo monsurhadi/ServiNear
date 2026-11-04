@@ -1,5 +1,5 @@
 /* ServiNear finder hero: search + map in one highlighted card */
-.finder{--r:18px;width:min(1180px,100%);margin:-78px auto 44px;z-index:3;display:grid;grid-template-columns:minmax(360px,430px) minmax(0,1fr);height:clamp(540px,76vh,700px);margin:0 0 38px;border:1px solid var(--line);border-radius:var(--r);background:var(--paper-light);overflow:hidden;box-shadow:0 30px 60px -34px #17242a66,0 2px 0 #fff inset;position:relative}
+.finder{--r:18px;width:min(1180px,100%);margin:-78px auto 44px;z-index:3;display:grid;grid-template-columns:minmax(360px,430px) minmax(0,1fr);height:clamp(640px,86vh,800px);margin:0 0 38px;border:1px solid var(--line);border-radius:var(--r);background:var(--paper-light);overflow:hidden;box-shadow:0 30px 60px -34px #17242a66,0 2px 0 #fff inset;position:relative}
 .finder-panel{display:flex;flex-direction:column;min-height:0;min-width:0;border-right:1px solid var(--line)}
 .finder-search{display:grid;gap:10px;padding:18px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#fffdf8 0%,#f8f2e4 100%)}
 .finder-title{margin:0 0 2px;font:600 20px/1.2 Fraunces,Georgia,serif;color:var(--ink)}
@@ -144,3 +144,7 @@ body.route-open #ai-chat-trigger{opacity:0;pointer-events:none}
 .fr-match{color:var(--teal);background:#e1efe8;padding:1px 7px;border-radius:99px;font-size:10px}
 #forgot-sent-to{letter-spacing:0!important;font-size:14px!important;font-weight:700;word-break:break-all}
 #forgot-step2-form .form-field{margin-top:10px}
+
+.finder-filters{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:10px 18px;border-bottom:1px solid var(--line);background:#fbfdfc}
+.finder-filters select{width:auto;min-height:40px;padding:0 12px;font-size:14px}
+.finder-bar .toggle-control,.finder-filters .toggle-control{font-size:13.5px;color:var(--ink-soft)}
