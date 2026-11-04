@@ -129,6 +129,9 @@ const wallet = async (c) => (await c.call("GET", "/api/wallet")).json.wallet;
   ok("changing the number clears verification", me.phone_verified === 0, JSON.stringify([ch.status, me.phone_verified]));
   ok("audit log records money decisions", (await adm.call("GET", "/api/admin/audit?limit=50")).json.some((a) => a.action === "escrow.release") );
 })().catch((e) => { console.error(e); failed++; }).finally(() => {
-  server.kill(); fs.rmSync(dir, { recursive: true, force: true });
+  server.kill();
+  setTimeout(() => {
+    try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+  }, 300);
   console.log(failed ? `\n${failed} check(s) failed` : "\nAll money/phone checks passed"); process.exit(failed ? 1 : 0);
 });

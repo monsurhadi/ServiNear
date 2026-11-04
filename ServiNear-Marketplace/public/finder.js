@@ -236,7 +236,7 @@
     else useMyLocation();
   }
 
-  /* ---------- Google sign-in ---------- */
+  /* ---------- Google & Firebase sign-in ---------- */
   const G = { cfg: null, mode: "none" };
   function role() { return $("#register-form")?.elements?.role?.value === "worker" ? "worker" : "customer"; }
   async function onCredential(credential) {
@@ -254,25 +254,113 @@
       document.head.appendChild(s);
     });
   }
+  function loadFirebase() {
+    return new Promise((ok) => {
+      if (window.firebase?.auth) return ok(true);
+      const s1 = document.createElement("script");
+      s1.src = "https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js";
+      s1.async = true;
+      s1.onload = () => {
+        const s2 = document.createElement("script");
+        s2.src = "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js";
+        s2.async = true;
+        s2.onload = () => ok(true);
+        s2.onerror = () => ok(false);
+        document.head.appendChild(s2);
+      };
+      s1.onerror = () => ok(false);
+      document.head.appendChild(s1);
+    });
+  }
+
+  function renderGoogleButtons() {
+    if (G.mode !== "gsi" || !window.google?.accounts?.id) return;
+    ["#google-login-btn", "#google-signup-btn"].forEach((sel) => {
+      const btn = $(sel); if (!btn) return;
+      let slot = btn.parentElement?.querySelector(".google-slot");
+      if (!slot) {
+        slot = document.createElement("div"); slot.className = "google-slot";
+        btn.after(slot);
+      }
+      btn.classList.add("hidden");
+      slot.innerHTML = "";
+      google.accounts.id.renderButton(slot, {
+        theme: "outline", size: "large", shape: "pill",
+        text: sel.includes("signup") ? "signup_with" : "signin_with",
+        width: 320, logo_alignment: "left"
+      });
+    });
+  }
+
+  async function signInWithFirebase() {
+    try {
+      const provider = new firebase.auth.GoogleAuthProvider();
+      provider.addScope("email");
+      provider.addScope("profile");
+      const result = await firebase.auth().signInWithPopup(provider);
+      const token = await result.user.getIdToken();
+      await onCredential(token);
+    } catch (err) {
+      if (err.code !== "auth/popup-closed-by-user") {
+        toast(err.message || "Firebase Google sign-in failed.");
+      }
+    }
+  }
+
   async function initGoogle() {
     try { G.cfg = await api("/api/config"); } catch { G.cfg = {}; }
     if (!G.cfg.demo) document.querySelectorAll(".demo-access").forEach((el) => el.classList.add("hidden"));
-    if (G.cfg.googleClientId && (await loadGsi())) {
+
+    const fbCfg = G.cfg?.firebaseConfig || window.FIREBASE_CONFIG;
+    if (fbCfg && (await loadFirebase())) {
+      try {
+        if (!firebase.apps?.length) firebase.initializeApp(fbCfg);
+        G.mode = "firebase";
+      } catch (err) {
+        console.warn("Firebase initialization warning:", err.message);
+      }
+    }
+
+    if (G.mode !== "firebase" && G.cfg.googleClientId && (await loadGsi())) {
       G.mode = "gsi";
-      google.accounts.id.initialize({ client_id: G.cfg.googleClientId, callback: (r) => onCredential(r.credential), ux_mode: "popup", auto_select: false });
-      ["#google-login-btn", "#google-signup-btn"].forEach((sel) => {
-        const btn = $(sel); if (!btn) return;
-        const slot = document.createElement("div"); slot.className = "google-slot";
-        btn.after(slot); btn.classList.add("hidden");
-        google.accounts.id.renderButton(slot, { theme: "outline", size: "large", shape: "pill", text: sel.includes("signup") ? "signup_with" : "signin_with", width: 320, logo_alignment: "left" });
+      google.accounts.id.initialize({
+        client_id: G.cfg.googleClientId,
+        callback: (r) => onCredential(r.credential),
+        ux_mode: "popup",
+        auto_select: false
       });
-    } else if (G.cfg.googleEnabled) G.mode = "mock";
+      renderGoogleButtons();
+    } else if (G.cfg.googleEnabled && G.mode === "none") {
+      G.mode = "mock";
+    }
+
+    const authDialog = $("#auth-dialog");
+    if (authDialog) {
+      authDialog.addEventListener("toggle", () => {
+        if (authDialog.open && G.mode === "gsi") renderGoogleButtons();
+      });
+    }
   }
+
   function googleClick() {
+    if (G.mode === "firebase" && window.firebase?.auth) {
+      return signInWithFirebase();
+    }
+    if (G.mode === "gsi" && window.google?.accounts?.id) {
+      google.accounts.id.prompt((notification) => {
+        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+          const slotBtn = document.querySelector(".google-slot div[role=button]");
+          if (slotBtn) slotBtn.click();
+        }
+      });
+      return;
+    }
     if (G.mode === "mock") {
       const email = prompt("Development mode: enter an email to simulate Google sign-in", "dev.user@example.com");
       if (email) onCredential(`mock:${email}:${email.split("@")[0]}`);
-    } else toast("Google sign-in isn't set up on this server yet.");
+      return;
+    }
+    toast("Google sign-in isn't set up on this server yet.");
   }
 
   /* ---------- Wiring ---------- */

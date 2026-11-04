@@ -18,6 +18,27 @@ const { render: renderEmail } = require("./lib/email-templates");
 const { createEmailService } = require("./lib/email");
 
 const ROOT = __dirname;
+
+// Auto-load .env if present (without external dependencies)
+try {
+  const envPath = path.join(ROOT, ".env");
+  if (fs.existsSync(envPath)) {
+    const envContent = fs.readFileSync(envPath, "utf8");
+    for (const line of envContent.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const idx = trimmed.indexOf("=");
+      if (idx > 0) {
+        const key = trimmed.slice(0, idx).trim();
+        let val = trimmed.slice(idx + 1).trim();
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1);
+        }
+        if (!(key in process.env)) process.env[key] = val;
+      }
+    }
+  }
+} catch {}
 const PUBLIC_DIR = path.join(ROOT, "public");
 const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, "data");
 const PORT = Number(process.env.PORT || 5000);
@@ -460,7 +481,6 @@ function seedDatabase() {
     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
 
   const authenticUsers = [
-    ["Platform Admin", "admin@servinear.local", defaultHash, "admin", "01711-000001", "Dhaka", "Banani Head Office, Road 11, Dhaka", null, "ServiNear Platform Administrator & Verification Authority.", null, null, null, null, 1, "Available"],
     ["Nusrat Jahan", "nusrat.jahan@gmail.com", defaultHash, "customer", "01712-345678", "Dhanmondi, Dhaka", "House 42, Road 27, Dhanmondi, Dhaka", null, "Verified residential client in Dhanmondi. Looking for trusted home service professionals.", null, null, 23.7465, 90.3760, 1, "Available"],
     ["Tariqul Islam", "tariqul.islam@gmail.com", defaultHash, "customer", "01819-234567", "Mirpur 10, Dhaka", "Block C, Avenue 4, Mirpur 10, Dhaka", null, "Apartment owner in Mirpur. Active user for maintenance and fast short-term help.", null, null, 23.8223, 90.3654, 1, "Available"],
     ["Sabrina Yasmin", "sabrina.yasmin@outlook.com", defaultHash, "customer", "01911-345678", "Uttara, Dhaka", "Sector 4, Road 12, Uttara, Dhaka", null, "Professional working in corporate sector, frequently hiring vetted home cleaners and technicians.", null, null, 23.8759, 90.3795, 1, "Available"],
@@ -527,28 +547,44 @@ if (SEED_DEMO) {
   CATEGORIES.forEach(([n, d]) => addCat.run(n, d));
 }
 function ensureEnvAdmin() {
+  // Purge any legacy demo admin account completely
+  try {
+    const legacy = db.prepare("SELECT id FROM users WHERE email='admin@servinear.local'").get();
+    if (legacy) {
+      db.prepare("DELETE FROM users WHERE id=?").run(legacy.id);
+      db.prepare("DELETE FROM sessions WHERE user_id=?").run(legacy.id);
+      console.log("Security: purged legacy demo administrator account (admin@servinear.local).");
+    }
+  } catch (err) {
+    console.warn("Could not check legacy admin:", err.message);
+  }
+
   const email = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase();
   const pw = String(process.env.ADMIN_PASSWORD || "");
-  if (IS_PROD) {
-    // Never leave the publicly documented demo administrator usable in production.
-    const legacy = db.prepare("SELECT id,password_hash FROM users WHERE email='admin@servinear.local'").get();
-    if (legacy && checkPassword("ServiNear123!", legacy.password_hash) && email !== "admin@servinear.local") {
-      db.prepare("UPDATE users SET status='suspended' WHERE id=?").run(legacy.id);
-      db.prepare("DELETE FROM sessions WHERE user_id=?").run(legacy.id);
-      console.warn("Security: suspended the default demo admin account (admin@servinear.local).");
-    }
-  }
-  if (!email || !pw) {
+
+  if (!email) {
     if (IS_PROD && !db.prepare("SELECT 1 FROM users WHERE role='admin' AND status='active'").get())
       console.warn("No active admin exists. Set ADMIN_EMAIL and ADMIN_PASSWORD (14+ chars) and restart.");
     return;
   }
-  if (pw.length < 14) { console.warn("ADMIN_PASSWORD must be at least 14 characters; admin not created."); return; }
-  const existing = db.prepare("SELECT id FROM users WHERE email=?").get(email);
-  if (!existing) {
-    db.prepare("INSERT INTO users(name,email,password_hash,role,verified,area,email_verified) VALUES(?,?,?,?,1,'Dhaka',1)")
-      .run("Platform Admin", email, passwordHash(pw), "admin");
-    console.log("Created admin account for " + email);
+
+  const existing = db.prepare("SELECT id, role, status FROM users WHERE email=?").get(email);
+  if (existing) {
+    if (pw && pw.length >= 14) {
+      db.prepare("UPDATE users SET role='admin', status='active', verified=1, email_verified=1, phone_verified=1, password_hash=? WHERE id=?")
+        .run(passwordHash(pw), existing.id);
+      console.log("Updated administrator credentials for " + email);
+    } else {
+      db.prepare("UPDATE users SET role='admin', status='active', verified=1, email_verified=1 WHERE id=?")
+        .run(existing.id);
+      console.log("Ensured administrator privileges for " + email);
+    }
+  } else if (pw && pw.length >= 14) {
+    db.prepare("INSERT INTO users(name,email,password_hash,role,phone,phone_verified,area,verified,email_verified,status) VALUES('Monsur Hasan',?,?, 'admin', '01944-713903', 1, 'Dhaka', 1, 1, 'active')")
+      .run(email, passwordHash(pw));
+    console.log("Created administrator account for " + email);
+  } else {
+    console.warn("ADMIN_PASSWORD must be at least 14 characters to provision a new administrator account.");
   }
 }
 ensureEnvAdmin();
@@ -851,7 +887,35 @@ async function handleApi(req,res,url) {
     } catch(error) {if(String(error.message).includes("UNIQUE"))fail(409,"An account with that email already exists.");throw error;}
   }
   if(req.method==="GET"&&url.pathname==="/api/config") {
-    return send(res,200,{googleClientId:GOOGLE_CLIENT_ID||null,googleEnabled:Boolean(GOOGLE_CLIENT_ID)||(!IS_PROD&&process.env.GOOGLE_AUTH_MOCK==="1"),demo:SEED_DEMO,phoneVerification:sms.configured,requirePhone:REQUIRE_PHONE,payments:gateway.enabled?gateway.provider:null,emailEnabled:mailer.configured,minTopup:MIN_TOPUP,maxTopup:MAX_TOPUP});
+    let firebaseConfig = null;
+    try {
+      if (process.env.FIREBASE_CONFIG) {
+        firebaseConfig = typeof process.env.FIREBASE_CONFIG === "string" ? JSON.parse(process.env.FIREBASE_CONFIG) : process.env.FIREBASE_CONFIG;
+      } else if (process.env.FIREBASE_PROJECT_ID) {
+        firebaseConfig = {
+          apiKey: process.env.FIREBASE_API_KEY || "",
+          authDomain: process.env.FIREBASE_AUTH_DOMAIN || `${process.env.FIREBASE_PROJECT_ID}.firebaseapp.com`,
+          projectId: process.env.FIREBASE_PROJECT_ID,
+          storageBucket: process.env.FIREBASE_STORAGE_BUCKET || `${process.env.FIREBASE_PROJECT_ID}.appspot.com`,
+          messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || "",
+          appId: process.env.FIREBASE_APP_ID || ""
+        };
+      }
+    } catch {}
+
+    const googleEnabled = Boolean(GOOGLE_CLIENT_ID || firebaseConfig) || (!IS_PROD && process.env.GOOGLE_AUTH_MOCK === "1");
+    return send(res,200,{
+      googleClientId: GOOGLE_CLIENT_ID || null,
+      firebaseConfig: firebaseConfig || null,
+      googleEnabled,
+      demo: SEED_DEMO,
+      phoneVerification: sms.configured,
+      requirePhone: REQUIRE_PHONE,
+      payments: gateway.enabled ? gateway.provider : null,
+      emailEnabled: mailer.configured,
+      minTopup: MIN_TOPUP,
+      maxTopup: MAX_TOPUP
+    });
   }
   if(req.method==="POST"&&url.pathname==="/api/auth/google") {
     const lim=limiter.hit("google:"+ctxIp,20,15*60*1000);
@@ -860,14 +924,18 @@ async function handleApi(req,res,url) {
     let g;
     try { g=await verifyGoogleIdToken(body.credential,GOOGLE_CLIENT_ID); }
     catch(error){ if(error.status)throw error; console.error("Google verify error:",error.message); fail(401,"Google could not verify this sign-in."); }
+    const adminEmail = (process.env.ADMIN_EMAIL || "").trim().toLowerCase();
+    const isAdminOwner = Boolean(adminEmail && g.email === adminEmail);
+
     let rec=db.prepare("SELECT id,role,status FROM users WHERE google_id=?").get(g.sub)||db.prepare("SELECT id,role,status FROM users WHERE email=?").get(g.email);
     if(rec){
       if(rec.status==="suspended")fail(403,"This account has been suspended. Please contact support.");
-      if(rec.role==="admin"&&process.env.GOOGLE_ALLOW_ADMIN!=="1")fail(403,"Administrators must sign in with their password.");
-      db.prepare("UPDATE users SET google_id=?, avatar_url=COALESCE(avatar_url,?), email_verified=1 WHERE id=?").run(g.sub,g.picture,rec.id);
+      if(rec.role==="admin"&&process.env.GOOGLE_ALLOW_ADMIN!=="1"&&!isAdminOwner)fail(403,"Administrators must sign in with their password.");
+      const targetRole = (isAdminOwner || rec.role === "admin") ? "admin" : rec.role;
+      db.prepare("UPDATE users SET role=?, google_id=?, avatar_url=COALESCE(avatar_url,?), email_verified=1 WHERE id=?").run(targetRole,g.sub,g.picture,rec.id);
       return send(res,200,{user:currentUser(rec.id)},{"Set-Cookie":setSession(rec.id)});
     }
-    const role=body.role==="worker"?"worker":"customer";
+    const role=isAdminOwner ? "admin" : (body.role==="worker"?"worker":"customer");
     const dummy=await passwordHashAsync(crypto.randomBytes(24).toString("hex"));
     const result=db.prepare(`INSERT INTO users(name,email,password_hash,google_id,avatar_url,role,area,availability,email_verified)
       VALUES(?,?,?,?,?,?,'Dhaka','Available',1)`).run(String(g.name).slice(0,80),g.email,dummy,g.sub,g.picture,role);
@@ -1537,7 +1605,7 @@ function sendStatic(req, res, file) {
 const server=http.createServer(async(req,res)=>{
   const url=new URL(req.url,`http://${req.headers.host||"localhost"}`);
   ctxIp=limiter.clientIp(req,TRUST_PROXY);ctxUa=req.headers["user-agent"];
-  const headers={"X-Content-Type-Options":"nosniff","Referrer-Policy":"strict-origin-when-cross-origin","Permissions-Policy":"geolocation=(self)","Content-Security-Policy":"default-src 'self'; script-src 'self' https://accounts.google.com; style-src 'self' https://fonts.googleapis.com https://accounts.google.com 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org https://tile.openstreetmap.org https://*.googleusercontent.com; connect-src 'self' https://router.project-osrm.org https://nominatim.openstreetmap.org https://accounts.google.com ws: wss:; frame-src https://accounts.google.com; font-src 'self' data: https://fonts.gstatic.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"};
+  const headers={"X-Content-Type-Options":"nosniff","Referrer-Policy":"strict-origin-when-cross-origin","Permissions-Policy":"geolocation=(self)","Content-Security-Policy":"default-src 'self'; script-src 'self' 'unsafe-inline' https://accounts.google.com https://apis.google.com https://www.gstatic.com; style-src 'self' https://fonts.googleapis.com https://accounts.google.com 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org https://tile.openstreetmap.org https://*.googleusercontent.com https://lh3.googleusercontent.com; connect-src 'self' https://router.project-osrm.org https://nominatim.openstreetmap.org https://accounts.google.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com https://*.googleapis.com ws: wss:; frame-src 'self' https://accounts.google.com https://*.firebaseapp.com https://*.firebase.com; font-src 'self' data: https://fonts.gstatic.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"};
   if(IS_PROD)headers["Strict-Transport-Security"]="max-age=31536000; includeSubDomains";
   headers["Cross-Origin-Opener-Policy"]="same-origin-allow-popups";
   Object.entries(headers).forEach(([key,value])=>res.setHeader(key,value));

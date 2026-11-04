@@ -1995,11 +1995,12 @@ function bindEvents() {
     if (demo) {
       const account = {
         customer: "nusrat.jahan@gmail.com",
-        worker: "tanvir.electrician@gmail.com",
-        admin: "admin@servinear.local"
+        worker: "tanvir.electrician@gmail.com"
       }[demo.dataset.demo];
-      $("#login-form [name=email]").value = account;
-      $("#login-form [name=password]").value = "ServiNear123!";
+      if (account) {
+        $("#login-form [name=email]").value = account;
+        $("#login-form [name=password]").value = "ServiNear123!";
+      }
       return;
     }
 

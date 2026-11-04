@@ -32,5 +32,11 @@ let failed = 0; const ok = (n, c, x = "") => { console.log(`${c ? "PASS" : "FAIL
     let limited = false; for (let i = 0; i < 45; i++) if ((await fetch(`${B}/api/vector/search?q=spam${i}`)).status === 429) limited = true;
     ok("search is rate-limited to cap provider spend", limited);
 
-  } finally { server.kill(); m.srv.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    server.kill();
+    m.srv.close();
+    setTimeout(() => {
+      try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch {}
+    }, 300);
+  }
 })().catch((e) => { console.error(e); failed++; }).finally(() => { console.log(failed ? `\n${failed} check(s) failed` : "\nAll search checks passed"); process.exit(failed ? 1 : 0); });
