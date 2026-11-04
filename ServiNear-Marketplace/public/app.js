@@ -99,9 +99,11 @@ async function api(path, options = {}) {
     throw new Error("API URL is not configured. Set SERVINEAR_API_BASE in runtime-config.js or Vercel environment variables.");
   }
 
+  const token = localStorage.getItem("servinear_token");
   const headers = {
     ...(options.body ? { "Content-Type": "application/json" } : {}),
     "ngrok-skip-browser-warning": "true",
+    ...(token ? { "Authorization": `Bearer ${token}` } : {}),
     ...options.headers
   };
 
@@ -414,6 +416,9 @@ function setActivePage() {
 async function reload() {
   try {
     const bootstrap = await api("/api/bootstrap");
+    if (!bootstrap.user && localStorage.getItem("servinear_token")) {
+      localStorage.removeItem("servinear_token");
+    }
     Object.assign(state, bootstrap);
     updateBadges();
     renderAll();
@@ -2201,6 +2206,7 @@ function bindEvents() {
     if (!state.user) return openAuth();
     try {
       await post("/api/auth/logout", {});
+      localStorage.removeItem("servinear_token");
       state.user = null;
       await reload();
       toast("You are logged out.");
@@ -2220,6 +2226,7 @@ function bindEvents() {
 
     try {
       const result = await post("/api/auth/register", values);
+      if (result.token) localStorage.setItem("servinear_token", result.token);
       const _regUser = result.user;
       state.user = _regUser;
       $("#auth-dialog")?.close();
@@ -2237,6 +2244,7 @@ function bindEvents() {
     const values = Object.fromEntries(new FormData(event.currentTarget));
     try {
       const result = await post("/api/auth/login", values);
+      if (result.token) localStorage.setItem("servinear_token", result.token);
       const _loginUser = result.user;
       state.user = _loginUser;
       $("#auth-dialog")?.close();
@@ -2459,8 +2467,18 @@ let wsPingInterval = null;
 
 function initWebSocket() {
   if (appWs && appWs.readyState === WebSocket.OPEN) return;
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const wsUrl = `${protocol}//${window.location.host}`;
+  const apiBase = String(window.SERVINEAR_API_BASE || "").trim().replace(/\/+$/, "");
+  let wsHost = window.location.host;
+  let protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  if (apiBase) {
+    try {
+      const u = new URL(apiBase);
+      wsHost = u.host;
+      protocol = u.protocol === "https:" ? "wss:" : "ws:";
+    } catch {}
+  }
+  const token = localStorage.getItem("servinear_token") || "";
+  const wsUrl = `${protocol}//${wsHost}${token ? `?token=${encodeURIComponent(token)}` : ""}`;
 
   try {
     appWs = new WebSocket(wsUrl);
@@ -2916,7 +2934,11 @@ async function init() {
     bindEvents();
     initWebSocket();
     initAIChatbot();
-    Object.assign(state, await api("/api/bootstrap"));
+    const _boot = await api("/api/bootstrap");
+    if (!_boot.user && localStorage.getItem("servinear_token")) {
+      localStorage.removeItem("servinear_token");
+    }
+    Object.assign(state, _boot);
     setLanguage(state.lang);
     if (state.user && $("#support-form")) {
       $("#support-form").elements.name.value = state.user.name;

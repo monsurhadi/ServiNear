@@ -242,6 +242,7 @@
   async function onCredential(credential) {
     try {
       const res = await post("/api/auth/google", { credential, role: role() });
+      if (res.token) localStorage.setItem("servinear_token", res.token);
       const _gUser = res.user;
       state.user = _gUser;
       $("#auth-dialog")?.close();

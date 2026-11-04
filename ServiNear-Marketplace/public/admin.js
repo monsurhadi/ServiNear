@@ -7,10 +7,15 @@
   const when = (s) => (s ? new Date(String(s).replace(" ", "T") + (String(s).includes("Z") ? "" : "Z")).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "—");
 
   async function api(path, opts = {}) {
+    const token = localStorage.getItem("servinear_token");
     const res = await fetch(API + path, {
       credentials: "include",
       ...opts,
-      headers: { ...(opts.body ? { "Content-Type": "application/json" } : {}), ...(opts.headers || {}) }
+      headers: {
+        ...(opts.body ? { "Content-Type": "application/json" } : {}),
+        ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+        ...(opts.headers || {})
+      }
     });
     if (opts.raw) return res;
     const data = await res.json().catch(() => ({}));

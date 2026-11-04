@@ -637,8 +637,15 @@ function userIdForToken(token) {
   if (row.expires_at < Date.now()) { db.prepare("DELETE FROM sessions WHERE token_hash=?").run(h); return null; }
   return row.user_id;
 }
+function extractToken(req) {
+  const auth = req.headers && req.headers.authorization;
+  if (auth && /^Bearer\s+/i.test(auth)) {
+    return auth.replace(/^Bearer\s+/i, "").trim();
+  }
+  return parseCookies(req.headers && req.headers.cookie).servinear_session || null;
+}
 function getSession(req) {
-  const token = parseCookies(req.headers.cookie).servinear_session;
+  const token = extractToken(req);
   const userId = userIdForToken(token);
   if (!userId) return null;
   db.prepare("UPDATE sessions SET expires_at=? WHERE token_hash=?").run(Date.now() + SESSION_TTL * 1000, hashToken(token));
@@ -777,12 +784,15 @@ function sessionCookie(token, maxAge = SESSION_TTL) {
   return `servinear_session=${token}; HttpOnly; SameSite=${sameSite}; Path=/; Max-Age=${maxAge}${domain}${secure}`;
 }
 let ctxIp = null, ctxUa = null;
-function setSession(userId) {
-  const token=crypto.randomBytes(32).toString("hex");
+function createSession(userId) {
+  const token = crypto.randomBytes(32).toString("hex");
   db.prepare("INSERT INTO sessions(token_hash,user_id,expires_at,created_at,ip,user_agent) VALUES(?,?,?,?,?,?)")
     .run(hashToken(token), userId, Date.now() + SESSION_TTL * 1000, Date.now(), ctxIp || null, String(ctxUa || "").slice(0, 200));
   db.prepare("UPDATE users SET last_login_at=CURRENT_TIMESTAMP WHERE id=?").run(userId);
-  return sessionCookie(token, SESSION_TTL);
+  return { token, cookie: sessionCookie(token, SESSION_TTL) };
+}
+function setSession(userId) {
+  return createSession(userId).cookie;
 }
 function validateText(value,label,min,max) {
   const text=String(value||"").trim();
@@ -849,10 +859,10 @@ async function handleApi(req,res,url) {
     const record=db.prepare("SELECT id,password_hash,status FROM users WHERE email=?").get(email);
     if(!record||!(await checkPasswordAsync(String(body.password||""),record.password_hash)))fail(401,"Email or password is incorrect.");
     if(record.status==="suspended")fail(403,"This account has been suspended. Please contact support.");
-    return send(res,200,{user:currentUser(record.id)},{"Set-Cookie":setSession(record.id)});
+    const sess = createSession(record.id); return send(res,200,{user:currentUser(record.id),token:sess.token},{"Set-Cookie":sess.cookie});
   }
   if(req.method==="POST"&&url.pathname==="/api/auth/logout") {
-    const token=parseCookies(req.headers.cookie).servinear_session;if(token)db.prepare("DELETE FROM sessions WHERE token_hash=?").run(hashToken(token));
+    const token = extractToken(req); if(token) db.prepare("DELETE FROM sessions WHERE token_hash=?").run(hashToken(token));
     return send(res,200,{ok:true},{"Set-Cookie":sessionCookie("", 0)});
   }
   if(req.method==="POST"&&url.pathname==="/api/auth/register") {
@@ -883,7 +893,7 @@ async function handleApi(req,res,url) {
       notifyUser(id, "Welcome to ServiNear!", "Your account is created. Explore local verified helpers and post your first task.", "system");
       if(role==="worker")indexWorker(db.prepare("SELECT * FROM users WHERE id=?").get(id));
       try { mailService.sendVerification(db.prepare("SELECT id,name,email,email_verified FROM users WHERE id=?").get(id)); } catch(e) { console.error("Verification email error:", e.message); }
-      return send(res,201,{user:currentUser(id)},{"Set-Cookie":setSession(id)});
+      const sess = createSession(id); return send(res,201,{user:currentUser(id),token:sess.token},{"Set-Cookie":sess.cookie});
     } catch(error) {if(String(error.message).includes("UNIQUE"))fail(409,"An account with that email already exists.");throw error;}
   }
   if(req.method==="GET"&&url.pathname==="/api/config") {
@@ -933,7 +943,7 @@ async function handleApi(req,res,url) {
       if(rec.role==="admin"&&process.env.GOOGLE_ALLOW_ADMIN!=="1"&&!isAdminOwner)fail(403,"Administrators must sign in with their password.");
       const targetRole = (isAdminOwner || rec.role === "admin") ? "admin" : rec.role;
       db.prepare("UPDATE users SET role=?, google_id=?, avatar_url=COALESCE(avatar_url,?), email_verified=1 WHERE id=?").run(targetRole,g.sub,g.picture,rec.id);
-      return send(res,200,{user:currentUser(rec.id)},{"Set-Cookie":setSession(rec.id)});
+      const sess = createSession(rec.id); return send(res,200,{user:currentUser(rec.id),token:sess.token},{"Set-Cookie":sess.cookie});
     }
     const role=isAdminOwner ? "admin" : (body.role==="worker"?"worker":"customer");
     const dummy=await passwordHashAsync(crypto.randomBytes(24).toString("hex"));
@@ -942,7 +952,7 @@ async function handleApi(req,res,url) {
     const id=Number(result.lastInsertRowid);
     notifyUser(id,"Welcome to ServiNear!","Your account is connected with Google.","system");
     if(role==="worker")indexWorker(db.prepare("SELECT * FROM users WHERE id=?").get(id));
-    return send(res,201,{user:currentUser(id)},{"Set-Cookie":setSession(id)});
+    const sess = createSession(id); return send(res,201,{user:currentUser(id),token:sess.token},{"Set-Cookie":sess.cookie});
   }
   // Password reset: the code is only ever delivered by email, never returned to the caller.
   if(req.method==="POST"&&url.pathname==="/api/auth/forgot-password") {
@@ -966,7 +976,7 @@ async function handleApi(req,res,url) {
     const rec=db.prepare("SELECT password_hash FROM users WHERE id=?").get(user.id);
     if(!(await checkPasswordAsync(current,rec.password_hash))) fail(400,"Your current password is incorrect.");
     const hash=await passwordHashAsync(next);
-    const token=parseCookies(req.headers.cookie).servinear_session;
+    const token = extractToken(req);
     db.prepare("UPDATE users SET password_hash=? WHERE id=?").run(hash,user.id);
     db.prepare("DELETE FROM sessions WHERE user_id=? AND token_hash<>?").run(user.id,token?hashToken(token):"");
     try { mailService.enqueue({userId:user.id,to:user.email,kind:"password_changed",category:"transactional",data:{name:user.name,when:new Date().toUTCString(),url:appBase()+"/"}}); } catch(e) { console.error("Password-changed email error:",e.message); }
@@ -1624,11 +1634,12 @@ const server=http.createServer(async(req,res)=>{
       if(origin) {
         res.setHeader("Access-Control-Allow-Origin",origin);
         res.setHeader("Access-Control-Allow-Credentials","true");
+        res.setHeader("Access-Control-Allow-Headers","Content-Type,Authorization,ngrok-skip-browser-warning");
         res.setHeader("Vary","Origin");
       }
       if(req.method==="OPTIONS") {
         res.setHeader("Access-Control-Allow-Methods","GET,POST,PATCH,PUT,DELETE,OPTIONS");
-        res.setHeader("Access-Control-Allow-Headers","Content-Type,ngrok-skip-browser-warning");
+        res.setHeader("Access-Control-Allow-Headers","Content-Type,Authorization,ngrok-skip-browser-warning");
         res.writeHead(204);return res.end();
       }
       const gl=limiter.hit("api:"+ctxIp,600,60*1000);
@@ -1659,7 +1670,12 @@ const connectedClients = new Map();
 
 wss.on("connection", (ws, req) => {
   const cookies = parseCookies(req.headers.cookie);
-  const token = cookies.servinear_session;
+  let wsToken = cookies.servinear_session;
+  try {
+    const wsUrl = new URL(req.url, "http://localhost");
+    wsToken = wsUrl.searchParams.get("token") || wsToken;
+  } catch {}
+  const token = wsToken;
   const wsUserId = userIdForToken(token);
   const user = wsUserId ? currentUser(wsUserId) : null;
 
