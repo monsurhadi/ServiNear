@@ -193,6 +193,9 @@ const I18N = {
     liveMapSub: "Click any marker to inspect provider profiles in that location.",
     recenterMap: "Recenter map",
     notifTitle: "Notifications",
+    notifEyebrow: "ACTIVITY & ALERTS",
+    notifSub: "Stay updated on your tasks, offers, and messages.",
+    viewAllNotifs: "View all notifications →",
     markRead: "Mark all read",
     noNotifs: "No new notifications.",
     inboxTitle: "Inbox",
@@ -270,6 +273,9 @@ const I18N = {
     liveMapSub: "যেকোনো মার্কার ক্লিক করে ওই এলাকার সার্ভিস প্রোভাইডারদের প্রোফাইল দেখুন।",
     recenterMap: "ম্যাপ রিসেন্টার",
     notifTitle: "নোটিফিকেশন",
+    notifEyebrow: "অ্যাক্টিভিটি ও অ্যালার্ট",
+    notifSub: "আপনার কাজ, অফার এবং বার্তার সর্বশেষ আপডেট দেখুন।",
+    viewAllNotifs: "সব নোটিফিকেশন দেখুন →",
     markRead: "সব পড়া হয়েছে",
     noNotifs: "নতুন কোনো নোটিফিকেশন নেই।",
     inboxTitle: "ইনবক্স চ্যাট",
@@ -385,6 +391,7 @@ function routeFromPath() {
     "/profile": "profile",
     "/admin": "admin",
     "/inbox": "inbox",
+    "/notifications": "notifications",
     "/saved": "saved"
   })[path] || "discover";
 }
@@ -470,7 +477,7 @@ function renderAll() {
   const chatBtn = $("#nav-chat-btn");
   if (chatBtn) chatBtn.classList.toggle("hidden", !state.user);
 
-  const notifBtn = $("#notif-toggle-btn");
+  const notifBtn = $("#notif-toggle-btn") || $("#notif-nav-btn");
   if (notifBtn) notifBtn.classList.toggle("hidden", !state.user);
 
   renderCategoryOptions();
@@ -1588,29 +1595,61 @@ async function sendChatMessage(text) {
 async function loadNotifications() {
   if (!state.user) return;
   try {
-    const notifs = await api("/api/notifications");
+    const res = await api("/api/notifications");
+    const notifs = Array.isArray(res) ? res : (res.notifications || []);
     state.notifications = notifs;
-    state.unreadNotifications = notifs.filter((n) => !n.read).length;
+    state.unreadNotifications = typeof res.unread === "number" ? res.unread : notifs.filter((n) => !n.read).length;
     updateBadges();
 
-    const listEl = $("#notif-list");
-    if (!listEl) return;
+    const emptyMsg = state.lang === "bn" ? "নতুন কোনো নোটিফিকেশন নেই।" : "No new notifications.";
 
-    if (notifs.length === 0) {
-      listEl.innerHTML = `<div class="notif-empty">${state.lang === "bn" ? "নতুন কোনো নোটিফিকেশন নেই।" : "No new notifications."}</div>`;
-      return;
+    // Render in dropdown drawer
+    const listEl = $("#notif-list");
+    if (listEl) {
+      if (notifs.length === 0) {
+        listEl.innerHTML = `<div class="notif-empty">${emptyMsg}</div>`;
+      } else {
+        listEl.innerHTML = notifs.map((n) => `
+          <div class="notif-item ${n.read ? "" : "unread"}" data-notif-id="${n.id}" data-notif-link="${escapeHtml(n.link || "")}">
+            <span class="notif-item-title">${escapeHtml(n.title)}</span>
+            <span class="notif-item-body">${escapeHtml(n.message || n.body || "")}</span>
+            <span class="notif-item-time">${timeAgo(n.created_at)}</span>
+          </div>
+        `).join("");
+      }
     }
 
-    listEl.innerHTML = notifs.map((n) => `
-      <div class="notif-item ${n.read ? "" : "unread"}" data-notif-id="${n.id}" data-notif-link="${escapeHtml(n.link || "")}">
-        <span class="notif-item-title">${escapeHtml(n.title)}</span>
-        <span class="notif-item-body">${escapeHtml(n.body)}</span>
-        <span class="notif-item-time">${timeAgo(n.created_at)}</span>
-      </div>
-    `).join("");
+    // Render in full page if open
+    const fullListEl = $("#notifications-full-list");
+    if (fullListEl) {
+      const countEl = $("#notif-page-count");
+      if (countEl) countEl.textContent = `${notifs.length} ${state.lang === "bn" ? "টি নোটিফিকেশন" : "notifications"}`;
+      if (notifs.length === 0) {
+        fullListEl.innerHTML = `<div class="notif-empty" style="padding: 40px 20px;">${emptyMsg}</div>`;
+      } else {
+        fullListEl.innerHTML = notifs.map((n) => `
+          <div class="notif-item ${n.read ? "" : "unread"}" data-notif-id="${n.id}" data-notif-link="${escapeHtml(n.link || "")}" style="padding: 16px 20px;">
+            <div class="flex justify-between items-start">
+              <span class="notif-item-title" style="font-size: 14.5px;">${escapeHtml(n.title)}</span>
+              <span class="notif-item-time">${timeAgo(n.created_at)}</span>
+            </div>
+            <span class="notif-item-body" style="font-size: 13px; margin-top: 4px;">${escapeHtml(n.message || n.body || "")}</span>
+          </div>
+        `).join("");
+      }
+    }
   } catch (error) {
     console.error("Notifications fetch error:", error);
   }
+}
+
+async function renderNotificationsPage() {
+  if (!state.user) {
+    navigate("/");
+    openAuth("login");
+    return;
+  }
+  await loadNotifications();
 }
 
 async function markNotificationRead(id, link) {
@@ -1905,6 +1944,7 @@ function renderPage() {
   if (state.page === "profile") renderProfile();
   if (state.page === "admin") renderAdmin();
   if (state.page === "inbox") loadInbox();
+  if (state.page === "notifications") renderNotificationsPage();
   if (state.page === "saved") renderSavedPage();
   refreshIcons();
 }
@@ -1931,7 +1971,7 @@ function bindEvents() {
     }
 
     // Notification Drawer Toggle
-    const notifBtn = event.target.closest("#notif-toggle-btn");
+    const notifBtn = event.target.closest("#notif-toggle-btn, #notif-nav-btn, .notif-btn");
     if (notifBtn) {
       const drawer = $("#notif-drawer");
       drawer?.classList.toggle("hidden");
@@ -1940,7 +1980,7 @@ function bindEvents() {
     }
 
     // Close notification drawer if clicked outside
-    if (!event.target.closest(".notif-btn") && !event.target.closest("#notif-drawer")) {
+    if (!event.target.closest("#notif-toggle-btn, #notif-nav-btn, .notif-btn") && !event.target.closest("#notif-drawer")) {
       $("#notif-drawer")?.classList.add("hidden");
     }
 
@@ -1955,7 +1995,7 @@ function bindEvents() {
     }
 
     // Mark all notifications read
-    if (event.target.closest("#mark-notifs-read")) {
+    if (event.target.closest("#mark-notifs-read, #page-mark-notifs-read")) {
       markAllNotificationsRead();
       return;
     }

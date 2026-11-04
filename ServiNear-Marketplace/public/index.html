@@ -66,7 +66,7 @@
 
         <!-- Notifications button with badge and drawer -->
         <div class="notif-wrapper">
-          <button class="icon-button header-tool-btn" id="notif-nav-btn" type="button" title="Notifications" aria-label="Notifications" aria-expanded="false">
+          <button class="icon-button header-tool-btn notif-btn hidden" id="notif-toggle-btn" type="button" title="Notifications" aria-label="Notifications" aria-expanded="false">
             <i data-lucide="bell"></i>
             <span class="tool-badge hidden" id="notif-badge">0</span>
           </button>
@@ -77,6 +77,9 @@
             </div>
             <div class="notif-list" id="notif-list">
               <div class="notif-empty" data-i18n="noNotifs">No new notifications.</div>
+            </div>
+            <div style="padding:10px 14px;border-top:1px solid var(--line);background:var(--paper);text-align:center;">
+              <a href="/notifications" data-route class="text-xs font-bold text-teal hover:underline" data-i18n="viewAllNotifs">View all notifications →</a>
             </div>
           </div>
         </div>
@@ -402,6 +405,26 @@
       </div>
     </section>
 
+    <!-- Notifications Full Page View -->
+    <section class="page-view hidden" id="page-notifications" data-page="notifications">
+      <div class="subpage-heading">
+        <p class="eyebrow" data-i18n="notifEyebrow">ACTIVITY &amp; ALERTS</p>
+        <h1 data-i18n="notifTitle">Notifications</h1>
+        <p data-i18n="notifSub">Stay updated on your tasks, offers, and messages.</p>
+      </div>
+      <div style="max-width: 760px; margin: 0 auto; padding: 0 16px;">
+        <div class="flex justify-between items-center mb-4">
+          <span class="text-xs text-muted" id="notif-page-count">0 notifications</span>
+          <button class="button button-ghost button-sm" id="page-mark-notifs-read" type="button" data-i18n="markRead">Mark all read</button>
+        </div>
+        <div class="card p-0" style="overflow: hidden; border-radius: 12px;">
+          <div class="notif-list" id="notifications-full-list" style="max-height: none;">
+            <div class="notif-empty" data-i18n="noNotifs">No new notifications.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- User Profile Workspace with CholoBD Navigation Sidebar (Images 3 & 4) -->
     <section class="page-view hidden" id="page-profile" data-page="profile">
       <div class="profile-layout-container">
@@ -643,6 +666,7 @@
       <nav aria-labelledby="f-acct"><h2 id="f-acct" data-i18n="footerAccount">Your account</h2><ul>
         <li><a href="/profile" data-route data-i18n="footerProfile">Profile and wallet</a></li>
         <li><a href="/inbox" data-route data-i18n="footerInbox">Messages</a></li>
+        <li><a href="/notifications" data-route data-i18n="notifTitle">Notifications</a></li>
         <li><a href="/saved" data-route data-i18n="footerSaved">Saved</a></li>
       </ul></nav>
     </div>
