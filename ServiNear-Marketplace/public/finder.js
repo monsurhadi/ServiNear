@@ -242,8 +242,11 @@
   async function onCredential(credential) {
     try {
       const res = await post("/api/auth/google", { credential, role: role() });
-      state.user = res.user; $("#auth-dialog")?.close(); await reload();
-      toast(`Signed in as ${state.user.name}`);
+      const _gUser = res.user;
+      state.user = _gUser;
+      $("#auth-dialog")?.close();
+      await reload();
+      toast(`Signed in as ${state.user?.name || _gUser?.name || "you"}`);
     } catch (e) { toast(e.message); }
   }
   function loadGsi() {

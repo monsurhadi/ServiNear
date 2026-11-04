@@ -908,7 +908,7 @@ function renderProfile() {
   }
 
   const nameEl = $("#profile-user-name");
-  if (nameEl) nameEl.textContent = state.user.name;
+  if (nameEl) nameEl.textContent = state.user?.name || "";
 
   const tagEl = $("#profile-user-tag");
   if (tagEl) {
@@ -2220,10 +2220,12 @@ function bindEvents() {
 
     try {
       const result = await post("/api/auth/register", values);
-      state.user = result.user;
+      const _regUser = result.user;
+      state.user = _regUser;
       $("#auth-dialog")?.close();
       await reload();
-      toast(`Welcome, ${state.user.name}! Account created.`);
+      const _regName = state.user?.name || _regUser?.name || "there";
+      toast(`Welcome, ${_regName}! Account created.`);
     } catch (error) {
       showError($("#register-message"), error.message);
     }
@@ -2235,10 +2237,12 @@ function bindEvents() {
     const values = Object.fromEntries(new FormData(event.currentTarget));
     try {
       const result = await post("/api/auth/login", values);
-      state.user = result.user;
+      const _loginUser = result.user;
+      state.user = _loginUser;
       $("#auth-dialog")?.close();
       await reload();
-      toast(`Welcome back, ${state.user.name.split(" ")[0]}!`);
+      const _loginName = (state.user?.name || _loginUser?.name || "there").split(" ")[0];
+      toast(`Welcome back, ${_loginName}!`);
     } catch (error) {
       showError($("#login-message"), error.message);
     }
