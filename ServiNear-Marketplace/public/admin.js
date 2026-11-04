@@ -34,12 +34,12 @@
   function showImage(src) { const d = $("#dlg"); $("#dlg-title").textContent = "Document"; $("#dlg-text").innerHTML = `<img alt="" src="${esc(src)}">`; $("#dlg-ok").className = "btn hidden"; d.onclose = () => ($("#dlg-ok").className = "btn danger"); d.showModal(); }
 
   const pill = (t, kind = "") => `<span class="pill ${kind}">${esc(t)}</span>`;
-  const statusKind = { open: "info", accepted: "warn", completed: "ok", cancelled: "bad", active: "ok", suspended: "bad", held: "warn", released: "ok", refunded: "info", pending: "warn", approved: "ok", rejected: "bad", resolved: "ok", reviewing: "warn" };
+  const statusKind = { open: "info", accepted: "warn", completed: "ok", cancelled: "bad", active: "ok", suspended: "bad", held: "warn", released: "ok", refunded: "info", pending: "warn", approved: "ok", rejected: "bad", resolved: "ok", reviewing: "warn", sent: "ok", failed: "bad", paid: "ok", review: "warn", sending: "warn" };
   const st = (s) => pill(s, statusKind[s] || "");
 
   const SECTIONS = [
     ["overview", "Overview"], ["users", "Users"], ["tasks", "Tasks"], ["verify", "Verification"], ["payments", "Payments"],
-    ["reviews", "Reviews"], ["support", "Support"], ["categories", "Categories"], ["audit", "Audit log"]
+    ["reviews", "Reviews"], ["support", "Support"], ["email", "Email"], ["categories", "Categories"], ["audit", "Audit log"]
   ];
   const S = { view: "overview", me: null, badges: {}, users: { page: 1, q: "", role: "", status: "" }, tasks: { page: 1, q: "", status: "" } };
 
@@ -181,6 +181,27 @@
       ], rows, "No support requests.");
     },
 
+    async email(v) {
+      const d = await api("/api/admin/email");
+      S.badges.email = d.counts.failed || 0; nav();
+      const c = d.counts, pct = d.totalUsers ? Math.round((d.verifiedUsers / d.totalUsers) * 100) : 0;
+      v.innerHTML = `${d.configured ? "" : `<div class="card" style="border-color:#e8b9a8;background:#fbefe9;margin-bottom:14px"><strong>Email is not configured.</strong><br><span class="hint" style="margin:6px 0 0;display:block">${esc(d.problem || "Set EMAIL_PROVIDER, EMAIL_FROM and the provider credentials, then restart.")} Until then, password reset by email and notification emails are off.</span></div>`}
+        <div class="grid kpis">
+          <div class="card kpi"><small>Provider</small><strong style="font-size:22px">${esc(d.provider)}</strong><em>${esc(d.from || "no sender set")}</em></div>
+          <div class="card kpi"><small>Sent</small><strong>${c.sent || 0}</strong><em>${c.pending || 0} waiting to send</em></div>
+          <div class="card kpi"><small>Failed</small><strong>${c.failed || 0}</strong><em>need attention</em></div>
+          <div class="card kpi"><small>Verified emails</small><strong>${pct}%</strong><em>${d.verifiedUsers} of ${d.totalUsers} users</em></div>
+          <div class="card kpi"><small>Unsubscribed</small><strong>${d.unsubscribed}</strong><em>from optional emails</em></div>
+        </div>
+        <div class="tools"><button class="btn primary" data-act="email-test" ${d.configured ? "" : "disabled"}>Send me a test email</button></div>` +
+        table([
+          ["To", (e) => esc(e.to_email)], ["Subject", (e) => `<strong>${esc(e.subject)}</strong><span class="sub">${esc(e.kind)} · ${esc(e.category)}</span>`],
+          ["Status", (e) => st(e.status) + (e.last_error ? `<span class="sub" style="color:var(--rust)">${esc(e.last_error)}</span>` : "") + (e.status === "pending" && e.attempts ? `<span class="sub">attempt ${e.attempts}</span>` : "")],
+          ["Queued", (e) => when(e.created_at)],
+          ["", (e) => e.status === "failed" ? `<button class="btn sm" data-act="email-retry" data-id="${e.id}">Retry</button>` : ""]
+        ], d.outbox, "No emails sent yet.");
+    },
+
     async categories(v) {
       const items = await api("/api/admin/categories");
       v.innerHTML = `<form class="row-form" id="catform"><input name="name" placeholder="New category name" required minlength="2" maxlength="60"><input name="description" placeholder="Short description" maxlength="160"><button class="btn primary">Add category</button></form>` +
@@ -220,6 +241,8 @@
       else if (a === "payout-pay") { const ref = prompt(`Send ${taka(el.dataset.amount)} to ${el.dataset.method} ${el.dataset.account}, then enter the transaction reference:`); if (!ref) return; await send(`/api/admin/payouts/${id}/pay`, "POST", { reference: ref }); toast("Payout recorded as paid"); }
       else if (a === "payout-reject") { const note = prompt("Reason for declining (shown to the provider):"); if (note === null) return; await send(`/api/admin/payouts/${id}/reject`, "POST", { note }); toast("Payout declined, money returned to wallet"); }
       else if (a === "escrow-release" || a === "escrow-refund") { const rel = a === "escrow-release"; const note = prompt(rel ? "Release the escrow to the provider. Write the reason:" : "Refund the customer and cancel the task. Write the reason:"); if (!note) return; if (!(await ask(rel ? "Release to provider?" : "Refund customer?", `This moves the held money ${rel ? "to the provider" : "back to the customer"} and cannot be undone.`, rel ? "Release" : "Refund", !rel))) return; await send(`/api/admin/escrows/${id}/${rel ? "release" : "refund"}`, "POST", { note }); toast(rel ? "Escrow released" : "Escrow refunded"); }
+      else if (a === "email-test") { const r = await send("/api/admin/email/test", "POST"); toast(`Test email queued to ${r.to}`); }
+      else if (a === "email-retry") { await send(`/api/admin/email/${id}/retry`, "POST"); toast("Retrying…"); }
       else if (a === "reindex") { const r = await send("/api/admin/vector/reindex", "POST"); toast(`Search index rebuild started (${r.queued} items queued)`); }
       else if (a === "ticket") { await send(`/api/admin/support/${id}`, "PATCH", { status: el.dataset.s }); toast("Ticket updated"); }
       else if (a === "cedit") { const d = prompt("Category description", el.dataset.d); if (d === null) return; await send(`/api/admin/categories/${id}`, "PATCH", { description: d }); toast("Category updated"); }

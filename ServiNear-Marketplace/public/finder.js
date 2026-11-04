@@ -16,10 +16,10 @@
   const fmtTime = (s) => { const m = Math.round(s / 60); return m < 60 ? `${Math.max(1, m)} min` : `${Math.floor(m / 60)} h ${m % 60} min`; };
   const compass = (b) => ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"][Math.round(b / 45) % 8];
   const hasPos = (w) => Number.isFinite(Number(w.latitude)) && Number.isFinite(Number(w.longitude)) && w.latitude && w.longitude;
-  const ratingText = (w) => (Number(w.reviews) > 0 ? `★ ${Number(w.rating).toFixed(1)} (${w.reviews})` : "New");
+  const ratingText = (w) => (Number(w.reviews) > 0 ? `★ ${Number(w.rating).toFixed(1)} (${w.reviews})` : t("fx_new", "New"));
   const matchBadge = (w) => {
     const r = state.vectorResults?.get(w.id);
-    return r && r.semantic >= 0.35 ? `<span class="fr-match" title="Semantic match to your search">${r.match_pct} match</span>` : "";
+    return r && r.semantic >= 0.35 ? `<span class="fr-match" title="Semantic match to your search">${t("fx_match", "{p} match", { p: r.match_pct })}</span>` : "";
   };
   const money = (n) => (typeof window.money === "function" ? window.money(n) : `৳${Number(n || 0).toLocaleString()}`);
 
@@ -45,12 +45,12 @@
   }
 
   function popupHtml(w) {
-    const dist = state.position && hasPos(w) ? `<span class="pp-chip"><i data-lucide="navigation"></i>${fmtDist(distM(state.position, w))} away</span>` : "";
+    const dist = state.position && hasPos(w) ? `<span class="pp-chip"><i data-lucide="navigation"></i>${t("fx_away", "{d} away", { d: fmtDist(distM(state.position, w)) })}</span>` : "";
     return `<div class="pp">
-      <div class="pp-top"><strong>${esc(w.name)}</strong>${w.verified ? '<em class="pp-ok">Verified</em>' : ""}</div>
-      <div class="pp-sub">${esc(w.category || "Service")} · ${esc(w.area || "")}</div>
+      <div class="pp-top"><strong>${esc(w.name)}</strong>${w.verified ? `<em class="pp-ok">${t("fx_verified", "Verified")}</em>` : ""}</div>
+      <div class="pp-sub">${esc(tc(w.category || "Service"))} · ${esc(w.area || "")}</div>
       <div class="pp-row"><span class="pp-chip">${ratingText(w)}</span><span class="pp-chip">${money(w.rate)}</span>${dist}</div>
-      <button class="pp-btn" type="button" data-dir-id="${w.id}">Get directions</button>
+      <button class="pp-btn" type="button" data-dir-id="${w.id}">${t("fx_directions", "Get directions")}</button>
     </div>`;
   }
 
@@ -103,35 +103,39 @@
 
   function renderChips() {
     const box = $("#finder-chips");
-    if (!box || box.dataset.ready || !state.categories?.length) return;
-    box.dataset.ready = "1";
-    box.innerHTML = state.categories.slice(0, 9).map((c) => `<button type="button" class="chip" data-chip="${esc(c.name)}">${esc(c.name)}</button>`).join("");
+    if (!box || !state.categories?.length || box.dataset.lang === state.lang) return;
+    box.dataset.lang = state.lang;
+    const current = ($("#service-search")?.value || "").trim().toLowerCase();
+    box.innerHTML = state.categories.slice(0, 9).map((c) => `<button type="button" class="chip ${current === c.name.toLowerCase() ? "on" : ""}" data-chip="${esc(c.name)}">${esc(tc(c.name))}</button>`).join("");
   }
 
   function renderList(rows) {
     const box = $("#finder-results"), count = $("#finder-count");
     if (!box) return;
+    box.removeAttribute("aria-busy");
     let list = rows;
     if (boundsOnly && map) { const b = map.getBounds(); list = rows.filter((w) => hasPos(w) && b.contains([w.latitude, w.longitude])); }
-    if (count) count.textContent = `${list.length.toLocaleString()} professional${list.length === 1 ? "" : "s"}${boundsOnly ? " in view" : ""}`;
+    if (count) count.textContent = (list.length === 1 ? t("fx_pros_one", "1 professional") : t("fx_pros", "{n} professionals", { n: list.length.toLocaleString() })) + (boundsOnly ? " · " + t("fx_in_view", "in view") : "");
     if (!list.length) {
       box.innerHTML = state.vectorPending
-        ? `<div class="finder-empty"><strong>Searching…</strong><span>Finding the best matches for you.</span></div>`
-        : `<div class="finder-empty"><strong>No providers found</strong><span>Try another service, clear the area, or zoom the map out.</span></div>`;
+        ? `<div class="finder-empty"><strong>${t("fx_searching", "Searching…")}</strong><span>${t("fx_searching_sub", "Finding the best matches for you.")}</span></div>`
+        : `<div class="finder-empty"><strong>${t("fx_none", "No providers found")}</strong><span>${t("fx_none_sub", "Try another service, clear the area, or zoom the map out.")}</span></div>`;
       return;
     }
-    box.innerHTML = list.slice(0, 40).map((w) => {
+    const shown = Math.min(list.length, state.finderLimit || 30);
+    box.innerHTML = list.slice(0, shown).map((w) => {
       const d = state.position && hasPos(w) ? fmtDist(distM(state.position, w)) : "";
       return `<article class="fr" tabindex="0" data-focus-id="${w.id}">
         <div class="fr-av ${w.verified ? "ok" : ""}">${esc(String(w.name || "?").slice(0, 1))}</div>
         <div class="fr-main">
-          <div class="fr-name"><strong>${esc(w.name)}</strong>${w.verified ? '<i data-lucide="badge-check"></i>' : ""}</div>
-          <div class="fr-sub">${esc(w.category || "")} · ${esc(w.area || "")}</div>
+          <div class="fr-name"><strong>${esc(w.name)}</strong>${w.verified ? '<span class="seal" title="Verified (NID checked)" role="img" aria-label="Verified"><i data-lucide="check"></i></span>' : ""}</div>
+          <div class="fr-sub">${esc(tc(w.category || ""))} · ${esc(w.area || "")}</div>
           <div class="fr-meta">${matchBadge(w)}<span>${ratingText(w)}</span><span>${money(w.rate)}</span>${d ? `<span>${d}</span>` : ""}</div>
         </div>
         ${hasPos(w) ? `<button type="button" class="fr-dir" data-dir-id="${w.id}" aria-label="Directions to ${esc(w.name)}"><i data-lucide="navigation"></i></button>` : ""}
       </article>`;
     }).join("");
+    if (list.length > shown) box.insertAdjacentHTML("beforeend", `<button type="button" class="button button-quiet full-width" id="finder-more" style="margin-top:8px">${t("fx_more", "Show {n} more", { n: Math.min(30, list.length - shown) })}</button>`);
     refreshIcons(box);
   }
 
@@ -173,13 +177,13 @@
 
   function useMyLocation() {
     if (!navigator.geolocation) return msg("GPS isn't available in this browser. Type an address or pin your start on the map.", "warn");
-    msg("Finding your location…");
+    msg(t("fx_finding", "Finding your location…"));
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         state.position = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
         setOrigin({ lat: pos.coords.latitude, lng: pos.coords.longitude }, "My location");
       },
-      () => msg("Location permission was not granted. Type an address or pin your start on the map.", "warn"),
+      () => msg(t("fx_nogps", "Location permission was not granted. Type an address or pin your start on the map."), "warn"),
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
     );
   }
@@ -195,10 +199,10 @@
   async function route() {
     if (!origin || !dest) return;
     routeGroup.clearLayers();
-    msg("Calculating the best route…");
+    msg(t("fx_calc", "Calculating the best route…"));
     $("#route-summary").innerHTML = ""; $("#route-steps").innerHTML = "";
     const d = { lat: Number(dest.latitude), lng: Number(dest.longitude) };
-    const links = `<a target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&origin=${origin.lat},${origin.lng}&destination=${d.lat},${d.lng}&travelmode=driving">Open in Google Maps</a>
+    const links = `<a target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&origin=${origin.lat},${origin.lng}&destination=${d.lat},${d.lng}&travelmode=driving">${t("fx_gmaps", "Open in Google Maps")}</a>
       <a target="_blank" rel="noopener" href="https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=${origin.lat}%2C${origin.lng}%3B${d.lat}%2C${d.lng}">OpenStreetMap</a>`;
     try {
       const r = await fetch(`${OSRM}${origin.lng},${origin.lat};${d.lng},${d.lat}?overview=full&geometries=geojson&steps=true`, { signal: AbortSignal.timeout(12000) });
@@ -212,12 +216,12 @@
       $("#route-summary").innerHTML = `<div class="rs-big"><strong>${fmtTime(rt.duration)}</strong><span>${fmtDist(rt.distance)} · driving</span></div><div class="rs-links">${links}</div>`;
       $("#route-steps").innerHTML = rt.legs[0].steps.filter((s) => s.distance > 0 || s.maneuver?.type === "arrive")
         .map((s) => `<li><span>${esc(stepText(s))}</span><em>${s.distance ? fmtDist(s.distance) : ""}</em></li>`).join("");
-      msg("Travel time is an estimate for driving without live traffic.");
+      msg(t("fx_est", "Travel time is an estimate for driving without live traffic."));
     } catch {
       L.polyline([[origin.lat, origin.lng], [d.lat, d.lng]], { color: "#bd4d2c", weight: 4, dashArray: "8 10" }).addTo(routeGroup);
       map.fitBounds(L.latLngBounds([[origin.lat, origin.lng], [d.lat, d.lng]]), { padding: [60, 60] });
-      $("#route-summary").innerHTML = `<div class="rs-big"><strong>${fmtDist(distM(origin, d))}</strong><span>straight-line distance</span></div><div class="rs-links">${links}</div>`;
-      msg("Road directions are unavailable right now. Showing the straight line; use the links above for turn-by-turn.", "warn");
+      $("#route-summary").innerHTML = `<div class="rs-big"><strong>${fmtDist(distM(origin, d))}</strong><span>${t("fx_straight", "straight-line distance")}</span></div><div class="rs-links">${links}</div>`;
+      msg(t("fx_noroad", "Road directions are unavailable right now. Showing the straight line; use the links above for turn-by-turn."), "warn");
     }
   }
 
@@ -288,8 +292,9 @@
       if (row) focusProvider(row.dataset.focusId);
       if (e.target.closest("#route-close")) closePanel();
       if (e.target.closest("#route-locate")) useMyLocation();
-      if (e.target.closest("#route-pick")) { pickMode = true; map.getContainer().classList.add("picking"); msg("Tap the map where you want to start."); }
+      if (e.target.closest("#route-pick")) { pickMode = true; map.getContainer().classList.add("picking"); msg(t("fx_pinmsg", "Tap the map where you want to start.")); }
       if (e.target.closest("#map-fit")) fitResults();
+      if (e.target.closest("#finder-more")) { state.finderLimit = (state.finderLimit || 30) + 30; renderList(window.__lastRows || []); }
       if (e.target.closest("#google-login-btn,#google-signup-btn")) googleClick();
     }, true);
     $("#route-form")?.addEventListener("submit", async (e) => {
@@ -308,6 +313,6 @@
   bind();
   initGoogle();
   // Repaint once data has arrived, in case the first render happened before this script loaded.
-  const t = setInterval(() => { if (state.workers?.length) { clearInterval(t); try { renderProviders(); } catch {} } }, 300);
-  setTimeout(() => clearInterval(t), 15000);
+  const pollTimer = setInterval(() => { if (state.workers?.length) { clearInterval(pollTimer); try { renderProviders(); } catch {} } }, 300);
+  setTimeout(() => clearInterval(pollTimer), 15000);
 })();

@@ -27,6 +27,14 @@ services:
         sync: false
       - key: PUBLIC_API_URL
         sync: false                 # https://your-api.onrender.com (payment gateway callbacks)
+      - key: EMAIL_PROVIDER
+        sync: false                 # brevo or resend (SMTP is blocked on Render free)
+      - key: EMAIL_FROM
+        sync: false                 # ServiNear <no-reply@yourdomain.com>
+      - key: BREVO_API_KEY
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
       - key: SMS_PROVIDER
         sync: false                 # twilio or bulksmsbd
       - key: TWILIO_ACCOUNT_SID

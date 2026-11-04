@@ -18,8 +18,9 @@ const PROFESSION_ICONS = [
 let savedAlertPreference = "off";
 try { savedAlertPreference = window.localStorage.getItem("servinear-alerts") || "off"; } catch {}
 
-let savedLang = "bn";
-try { savedLang = window.localStorage.getItem("servinear_lang") || "bn"; } catch {}
+let savedLang = "";
+try { savedLang = window.localStorage.getItem("servinear_lang") || ""; } catch {}
+if (!savedLang) savedLang = (navigator.languages || [navigator.language || ""]).some((l) => /^bn\b/i.test(l)) ? "bn" : "en";
 
 const state = {
   user: null,
@@ -57,6 +58,7 @@ const state = {
   },
   adminInspectTarget: null
 };
+window.state = state; // lets i18n.js and the other modules read the current language
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -88,7 +90,7 @@ const timeAgo = (dateStr) => {
 };
 
 const categoryOptions = (placeholder = "Choose a category") => 
-  `<option value="">${placeholder}</option>${state.categories.map((c) => `<option value="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join("")}`;
+  `<option value="">${placeholder}</option>${state.categories.map((c) => `<option value="${escapeHtml(c.name)}">${escapeHtml(tc(c.name))}</option>`).join("")}`;
 
 const API_BASE = String(window.SERVINEAR_API_BASE || "").trim().replace(/\/+$/, "");
 
@@ -318,31 +320,46 @@ const I18N = {
     footerHelpline: "হেল্পলাইন"
   }
 };
+if (window.I18N_EXTRA) { for (const l of ["en", "bn"]) I18N[l] = { ...I18N[l], ...window.I18N_EXTRA[l] }; }
 
 function setLanguage(lang) {
-  state.lang = lang;
-  try { window.localStorage.setItem("servinear_lang", lang); } catch {}
+  state.lang = lang === "bn" ? "bn" : "en";
+  try { window.localStorage.setItem("servinear_lang", state.lang); } catch {}
+  document.documentElement.lang = state.lang;
 
-  const toggleBtn = $("#lang-toggle");
-  if (toggleBtn) {
-    toggleBtn.innerHTML = lang === "bn" 
-      ? '<span class="lang-pill-bn">বাংলা</span> | <span class="muted-text">English</span>'
-      : '<span class="muted-text">বাংলা</span> | <span class="lang-pill-en">English</span>';
+  const bnEl = $("#lang-bn"), enEl = $("#lang-en"), toggleBtn = $("#lang-toggle");
+  if (bnEl && enEl) {
+    bnEl.classList.toggle("active", state.lang === "bn"); enEl.classList.toggle("active", state.lang === "en");
+    toggleBtn?.setAttribute("aria-label", state.lang === "bn" ? "ভাষা: বাংলা। English-এ বদলাতে চাপুন" : "Language: English. Press to switch to বাংলা");
+  } else if (toggleBtn) {
+    toggleBtn.innerHTML = state.lang === "bn" ? '<span class="lang-opt active">বাংলা</span><span class="lang-opt">English</span>' : '<span class="lang-opt">বাংলা</span><span class="lang-opt active">English</span>';
   }
 
-  const dict = I18N[lang] || I18N.en;
+  const dict = I18N[state.lang] || I18N.en;
   $$("[data-i18n]").forEach((el) => {
     const key = el.dataset.i18n;
-    if (dict[key]) {
-      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
-        el.placeholder = dict[key];
-      } else {
-        el.innerHTML = dict[key];
-      }
-    }
+    if (el.dataset.i18nOrig === undefined) el.dataset.i18nOrig = el.innerHTML; // the English written in the HTML
+    const value = dict[key];
+    if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") { if (value) el.placeholder = value; return; }
+    if (value == null) { el.innerHTML = el.dataset.i18nOrig; return; }
+    if (/[<&]/.test(value)) el.innerHTML = value; else el.textContent = value;
   });
-
+  $$("[data-i18n-placeholder]").forEach((el) => { const v = dict[el.dataset.i18nPlaceholder]; if (v) el.placeholder = v; });
+  $$("[data-i18n-label]").forEach((el) => { const v = dict[el.dataset.i18nLabel]; if (v) el.setAttribute("aria-label", v); });
   renderAll();
+  updateDocumentTitle();
+}
+
+const PAGE_TITLES = {
+  discover: ["Find a professional near you", "আপনার কাছের কারিগর খুঁজুন"], categories: ["All categories", "সব ক্যাটাগরি"],
+  jobs: ["Help requests and tasks", "সাহায্যের অনুরোধ ও কাজ"], hot: ["Trending tasks and offers", "ট্রেন্ডিং কাজ ও অফার"],
+  about: ["About ServiNear", "ServiNear সম্পর্কে"], how: ["How it works", "কীভাবে কাজ করে"], help: ["Help and support", "সহায়তা"],
+  profile: ["Your profile and wallet", "আপনার প্রোফাইল ও ওয়ালেট"], inbox: ["Messages", "মেসেজ"], saved: ["Saved", "সংরক্ষিত"],
+  admin: ["Admin workspace", "অ্যাডমিন ওয়ার্কস্পেস"], "task-detail": ["Task details", "কাজের বিবরণ"]
+};
+function updateDocumentTitle() {
+  const t = PAGE_TITLES[state.page] || PAGE_TITLES.discover;
+  document.title = `${t[state.lang === "bn" ? 1 : 0]} · ServiNear`;
 }
 
 // ==========================================================================
@@ -376,11 +393,18 @@ function navigate(path) {
   state.page = routeFromPath();
   window.scrollTo(0, 0);
   renderPage();
+  updateDocumentTitle();
+  $("#main")?.focus({ preventScroll: true }); // keyboard and screen-reader users land at the top of the new page
 }
 
 function setActivePage() {
   $$(".page-view").forEach((view) => view.classList.toggle("hidden", view.dataset.page !== state.page));
-  $$(".nav-link[data-route]").forEach((link) => link.classList.toggle("active", link.getAttribute("href") === location.pathname));
+  $$(".nav-link[data-route]").forEach((link) => {
+    const on = link.getAttribute("href") === location.pathname;
+    link.classList.toggle("active", on);
+    if (on) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current");
+  });
+  updateDocumentTitle();
 }
 
 // ==========================================================================
@@ -428,9 +452,11 @@ function renderAll() {
 
   const profileLink = $("#profile-link");
   if (profileLink) {
-    const nameSpan = profileLink.querySelector("span");
+    const nameSpan = $("#profile-btn-text"), badge = $("#profile-avatar-initial");
     if (nameSpan) nameSpan.textContent = state.user ? state.user.name.split(" ")[0] : dict.myProfile;
+    if (badge) badge.textContent = state.user ? String(state.user.name).trim().slice(0, 1).toUpperCase() : "";
     profileLink.classList.toggle("hidden", !state.user);
+    if (state.user) profileLink.setAttribute("aria-label", state.user.name);
   }
 
   const adminLink = $("#admin-link");
@@ -458,7 +484,7 @@ function renderCategoryOptions() {
   if (jobCat) jobCat.innerHTML = categoryOptions();
   if (regCat) regCat.innerHTML = categoryOptions();
   if (taskFilter) {
-    taskFilter.innerHTML = `<option value="">${state.lang === "bn" ? "সব ক্যাটাগরি" : "All categories"}</option>${state.categories.map((c) => `<option>${escapeHtml(c.name)}</option>`).join("")}`;
+    taskFilter.innerHTML = `<option value="">${state.lang === "bn" ? "সব ক্যাটাগরি" : "All categories"}</option>${state.categories.map((c) => `<option>${escapeHtml(tc(c.name))}</option>`).join("")}`;
   }
 }
 
@@ -489,8 +515,8 @@ function categoryTile(category, featured = false) {
   return `
     <button class="category-tile ${featured ? "featured-tile" : ""}" data-category="${escapeHtml(category.name)}">
       <span class="category-icon"><i data-lucide="${icon}"></i></span>
-      <strong>${escapeHtml(category.name)}</strong>
-      ${featured ? `<small>${escapeHtml(category.description)}</small>` : ""}
+      <strong>${escapeHtml(tc(category.name))}</strong>
+      ${featured ? `<small>${escapeHtml(tcd(category.name, category.description))}</small>` : ""}
     </button>
   `;
 }
@@ -523,10 +549,11 @@ function filteredProviders() {
   const verified = $("#verified-filter")?.checked || false;
   const sort = $("#sort-filter")?.value || "recommended";
   const semantic = query && state.vectorResults && state.vectorQuery === query ? state.vectorResults : null;
+  const catHit = query ? window.matchCategory?.(query) : null;
 
   const rows = state.workers.filter((worker) =>
     (!verified || worker.verified) &&
-    (!query || semantic?.has(worker.id) || `${worker.category} ${worker.name} ${worker.bio}`.toLowerCase().includes(query)) &&
+    (!query || semantic?.has(worker.id) || `${worker.category} ${worker.name} ${worker.bio}`.toLowerCase().includes(query) || (catHit && worker.category === catHit)) &&
     (!area || worker.area.toLowerCase().includes(area) || state.position)
   );
 
@@ -593,7 +620,7 @@ function renderProviders() {
             <i data-lucide="bookmark"></i>
           </button>
         </div>
-        <p class="provider-category">${escapeHtml(w.category)} <span>·</span> ${escapeHtml(w.area)}</p>
+        <p class="provider-category">${escapeHtml(tc(w.category))} <span>·</span> ${escapeHtml(w.area)}</p>
         <p class="provider-bio">${escapeHtml(w.bio || "Local service professional")}</p>
         <div class="provider-meta">
           <span><i data-lucide="star"></i> ${Number(w.rating || 0).toFixed(1)} (${w.reviews})</span>
@@ -628,7 +655,7 @@ function jobCard(job, active = false) {
         <b>${money(job.budget)}</b>
       </span>
       <span class="task-card-meta">
-        <span>${escapeHtml(job.category)}</span>
+        <span>${escapeHtml(tc(job.category))}</span>
         <span>${escapeHtml(job.area)}</span>
         <span>${job.offer_count} ${job.offer_count === 1 ? "offer" : "offers"}</span>
       </span>
@@ -688,7 +715,7 @@ function renderTaskPreview(job) {
     <span class="status-pill status-${job.status}">${escapeHtml(job.status)}</span>
     <h2>${escapeHtml(job.title)}</h2>
     <div class="task-detail-meta">
-      <span>${escapeHtml(job.category)}</span>
+      <span>${escapeHtml(tc(job.category))}</span>
       <span>${escapeHtml(job.area)}</span>
       <span>${dateLabel(job.created_at)}</span>
     </div>
@@ -741,7 +768,7 @@ function renderTaskDetail(id) {
     <article class="task-detail-page">
       <div class="task-detail-main">
         <span class="status-pill status-${job.status}">${escapeHtml(job.status)} task</span>
-        <p class="eyebrow">${escapeHtml(job.category)} · POSTED ${dateLabel(job.created_at)}</p>
+        <p class="eyebrow">${escapeHtml(tc(job.category))} · POSTED ${dateLabel(job.created_at)}</p>
         <h1>${escapeHtml(job.title)}</h1>
         <div class="task-detail-meta">
           <span><i data-lucide="map-pin"></i> ${escapeHtml(job.area)}</span>
@@ -1018,12 +1045,6 @@ function renderActiveSettingsTab() {
           <small class="text-xs text-muted">Email cannot be changed</small>
         </label>
 
-        <!-- Security Lock Notice -->
-        <div class="settings-lock-box">
-          <i data-lucide="lock"></i>
-          <span>Password changes are handled via your email provider (Google/Credentials).</span>
-        </div>
-
         <!-- Save Button -->
         <div class="settings-footer-actions">
           <button type="submit" class="settings-save-btn">
@@ -1031,6 +1052,16 @@ function renderActiveSettingsTab() {
             <span>Save Changes</span>
           </button>
         </div>
+      </form>
+
+      <form id="password-form" class="password-card" novalidate>
+        <h3><i data-lucide="lock"></i> Change password</h3>
+        <label class="settings-field-group"><span>Current password</span><input class="settings-input" type="password" name="current_password" autocomplete="current-password" required></label>
+        <label class="settings-field-group"><span>New password (8+ characters)</span><input class="settings-input" type="password" name="new_password" minlength="8" autocomplete="new-password" required></label>
+        <label class="settings-field-group"><span>Confirm new password</span><input class="settings-input" type="password" name="confirm_password" minlength="8" autocomplete="new-password" required></label>
+        <p class="inline-message" id="password-msg" role="status" aria-live="polite"></p>
+        <small class="text-xs text-muted">Signed up with Google and never set a password? Use “Forgot password” on the sign-in screen to create one. Changing your password signs out your other devices.</small>
+        <div class="settings-footer-actions"><button type="submit" class="settings-save-btn"><i data-lucide="key-round"></i><span>Update password</span></button></div>
       </form>
     `;
   } else if (state.settingsTab === "profile") {
@@ -1186,6 +1217,17 @@ function renderActiveSettingsTab() {
           </label>
         </div>
 
+        <div class="settings-switch-row">
+          <div class="settings-switch-info">
+            <strong>✉️ Email notifications</strong>
+            <p>${u.email_verified ? "Offers, accepted tasks and new messages by email. Receipts and security emails are always sent." : "Confirm your email address to receive offer and message emails."}</p>
+          </div>
+          <label class="switch-toggle">
+            <input type="checkbox" name="email_notifications" ${u.email_notifications !== false && u.email_notifications !== 0 ? "checked" : ""}>
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+
         <!-- Save Button -->
         <div class="settings-footer-actions mt-3">
           <button type="submit" class="settings-save-btn">
@@ -1242,7 +1284,7 @@ function renderActivityView(root, isCustomer, myJobs, myOffers, bidsReceived) {
 
   root.innerHTML = `
     <div class="flex justify-between items-center mb-3">
-      <div class="profile-tabs" role="tablist">${tabs}</div>
+      <div class="profile-tabs" role="group" aria-label="Profile sections">${tabs}</div>
       <button class="button button-outline text-xs font-bold" id="toggle-view-settings-btn" type="button">
         <i data-lucide="settings"></i> ${state.lang === "bn" ? "প্রোফাইল সেটিংস" : "Profile Settings"}
       </button>
@@ -1391,7 +1433,7 @@ async function renderSavedPage() {
                   <i data-lucide="bookmark"></i>
                 </button>
               </div>
-              <p class="provider-category">${escapeHtml(w.category)} <span>·</span> ${escapeHtml(w.area)}</p>
+              <p class="provider-category">${escapeHtml(tc(w.category))} <span>·</span> ${escapeHtml(w.area)}</p>
               <div class="provider-price mt-2">
                 <small>Starting from</small>
                 <strong>${money(w.rate)}</strong>
@@ -1744,7 +1786,7 @@ async function renderAdmin() {
       <article class="admin-row">
         <div>
           <strong>${escapeHtml(w.name)}</strong>
-          <small>${escapeHtml(w.category)} · ${escapeHtml(w.area)}</small>
+          <small>${escapeHtml(tc(w.category))} · ${escapeHtml(w.area)}</small>
         </div>
         <button class="button button-outline" data-verify="${w.id}">Direct Verify</button>
       </article>
@@ -2201,30 +2243,35 @@ function bindEvents() {
     }
   });
 
-  // Forgot password form Step 1
+  // Forgot password: the code is delivered by email only.
+  let resetEmail = "";
+  const sendResetCode = async () => {
+    const res = await post("/api/auth/forgot-password", { email: resetEmail });
+    $("#forgot-sent-to").textContent = resetEmail;
+    $("#forgot-dev-hint").textContent = res.dev_code ? `Development mode: your code is ${res.dev_code}` : "";
+    $("#forgot-step1-form").classList.add("hidden");
+    $("#forgot-step2-form").classList.remove("hidden");
+    $("#forgot-code").focus();
+  };
   $("#forgot-step1-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const email = $("#forgot-email").value.trim();
-    try {
-      const res = await post("/api/auth/forgot-password", { email });
-      $("#forgot-preview-code").textContent = res.resetToken || "123456";
-      $("#forgot-step1-form").classList.add("hidden");
-      $("#forgot-step2-form").classList.remove("hidden");
-      toast("Reset code generated!");
-    } catch (error) {
-      showError($("#forgot-message"), error.message);
-    }
+    resetEmail = $("#forgot-email").value.trim().toLowerCase();
+    const btn = event.submitter; if (btn) btn.disabled = true;
+    try { await sendResetCode(); showError($("#forgot-message"), ""); } catch (error) { showError($("#forgot-message"), error.message); }
+    finally { if (btn) btn.disabled = false; }
   });
-
-  // Forgot password form Step 2
+  $("#forgot-resend")?.addEventListener("click", async () => {
+    try { await sendResetCode(); toast("If that email is registered, a new code is on its way."); } catch (error) { showError($("#forgot-message"), error.message); }
+  });
   $("#forgot-step2-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const code = $("#forgot-code").value.trim();
     const newPassword = $("#forgot-new-pass").value;
     try {
-      await post("/api/auth/reset-password", { token: code, new_password: newPassword });
+      await post("/api/auth/reset-password", { email: resetEmail, code, password: newPassword });
       $("#forgot-dialog")?.close();
-      toast("Password updated successfully! Please log in.");
+      $("#forgot-step2-form").reset(); $("#forgot-step2-form").classList.add("hidden"); $("#forgot-step1-form").classList.remove("hidden");
+      toast("Password updated. Please sign in with your new password.");
       openAuth("login");
     } catch (error) {
       showError($("#forgot-message"), error.message);
@@ -2296,7 +2343,7 @@ function bindEvents() {
   });
   ["#global-search-input", "#service-search", "#area-search", "#verified-filter", "#sort-filter"].forEach((sel) => {
     $(sel)?.addEventListener("input", () => {
-      state.providerLimit = 24;
+      state.providerLimit = 24; state.finderLimit = 30;
       if (sel === "#service-search" || sel === "#global-search-input") triggerVectorSearch($(sel).value);
       renderProviders();
       if (sel === "#global-search-input") renderTasks();
@@ -2748,7 +2795,7 @@ async function renderWalletSection() {
       <div class="workspace-section">
         <div class="section-header-compact">
           <h2 class="text-xl font-bold">${state.lang === "bn" ? "ওয়ালেট ও এসক্রো ব্যালেন্স" : "Wallet & Escrow Balance"}</h2>
-          <p class="text-xs text-muted">${state.lang === "bn" ? "নিরাপদ লেনদেন ও তাত্ক্ষণিক ক্যাশআউট।" : "Secure transactions and simulated instant payouts."}</p>
+          <p class="text-xs text-muted">${state.lang === "bn" ? "নিরাপদ পেমেন্ট এসক্রোতে সুরক্ষিত, পেআউট যায় আপনার বিকাশ, নগদ বা রকেটে।" : "Secure payments held in escrow, with payouts to your bKash, Nagad or Rocket."}</p>
         </div>
 
         ${window.ServiMoney ? window.ServiMoney.walletBanner() : ""}

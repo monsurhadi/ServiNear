@@ -69,9 +69,37 @@ Then open `http://localhost:5050`.
 | **Phone OTP** | 6-digit single-use codes, hashed, expiring in 5 minutes, 5 attempts, resend cooldown, per-user/phone/IP limits. One verified account per number. | `SMS_PROVIDER` (+ provider keys) |
 | **Semantic search** | Providers and tasks are embedded by a real model, ranked together with keywords, verified status, rating and distance. Falls back to keyword search if the provider is down. | `EMBEDDING_BASE_URL`, `EMBEDDING_MODEL`, `EMBEDDING_API_KEY` |
 
-Development uses a mock gateway and a console SMS provider (the OTP is printed in the server log and returned as `dev_code`). Both are refused when `NODE_ENV=production`. `npm test` runs three suites (core, money/phone, search).
+Development uses a mock gateway and a console SMS provider (the OTP is printed in the server log and returned as `dev_code`). Both are refused when `NODE_ENV=production`. `npm test` runs four suites (core, money/phone, search, email); `npm run test:ui` runs the browser quality gate.
 
 **Business decisions you still need to make:** who pays the gateway fee (currently ServiNear absorbs it, so a ৳1,000 top-up credits ৳1,000), your platform commission on completed tasks (currently none), and refund policy for disputes (admins decide per case in `/admin`).
+
+
+### Email (new)
+
+| What | Behaviour |
+| --- | --- |
+| **Password reset** | A 6-digit code is **emailed**, never returned by the API. Codes are random, stored hashed, expire in 15 minutes, work once, lock after 5 wrong tries, and every address gets the same response (no account enumeration). A successful reset signs out all devices and sends a "password changed" alert. |
+| **Email verification** | New password accounts get a confirmation link (valid 48 hours). Google sign-ups are already verified. |
+| **Notifications** | Offers, accepted/completed tasks and messages are emailed to *verified* addresses unless the user opts out (Profile > Settings, or one-click unsubscribe in the email). **Payment, payout, escrow, verification and security emails always send.** Chat emails are throttled to one per 30 minutes. |
+| **Reliability** | Emails go through a persistent queue with retries (1 min, 5 min, 30 min, 2 h) so a provider outage never loses mail or slows a request. Admins see the outbox, can send a test email and retry failures in `/admin` > Email. Codes and links are wiped from the queue after delivery. |
+
+**Choosing a provider.** Render's free tier blocks outbound SMTP (ports 25/465/587), so use **Brevo** or **Resend** (HTTPS APIs) there; SMTP works on paid Render plans or a VPS.
+
+**Deliverability checklist (do this or your mail lands in spam):** send from a domain you own, verify that domain in your provider, and publish the SPF, DKIM and DMARC DNS records the provider gives you. `EMAIL_FROM` must use that domain. Consumer addresses such as `@gmail.com` will not authenticate.
+
+Not included yet: bounce/complaint webhooks (hard bounces are not suppressed automatically) and Bangla email templates (English only).
+
+
+### Front end and design
+
+- **Identity:** jade and marigold on a cool paper, with a gold **verified seal** as the one signature element (provider rows, map pins, profiles). Design tokens live at the top of `public/design.css`; it loads last and overrides `styles.css`, so retheming means editing that one file.
+- **Bangla and English, completely:** every static string and all 32 category names are translated (`public/i18n.js`). The default follows the browser (`bn` browsers get Bangla), the choice is remembered, and `<html lang>` and page titles follow the language. **Have a native speaker review the Bangla copy before launch**; it was written carefully but has not been proofread by one.
+- **Type:** Hind Siliguri (body) and Anek Bangla (headings), self-hosted in `public/vendor/fonts`. Both cover Bangla and Latin, so mixed-language screens look consistent, and nothing is fetched from Google Fonts.
+- **Performance:** text assets are served with Brotli/gzip (about 75% smaller), vendor files are cached for 30 days, and the finder shows skeletons while data loads.
+- **Accessibility:** skip link, landmarks, visible focus rings on every control, 44px touch targets, `prefers-reduced-motion` support, and zero axe-core violations (WCAG 2.1 AA) on every page, dialog and signed-in screen.
+- **Quality gate:** `npm run test:ui` (needs `npx playwright install chromium`) checks accessibility, sideways scrolling at 360/390/1360px, JavaScript errors, translations and keyboard navigation. CI runs it on every push.
+
+Open items you must supply: the **Terms & Conditions and Privacy Policy links in the sign-up dialog point nowhere** because those pages don't exist yet, and the helpline number shown on the Help page (`09612-345678`) is a placeholder to confirm.
 
 ## Demo accounts (development only)
 All fixed and generated demo accounts use password `ServiNear123!`.
