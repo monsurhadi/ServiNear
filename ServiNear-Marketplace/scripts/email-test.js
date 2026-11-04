@@ -220,5 +220,11 @@ function startApi(port, replies) {
     ok("support requests get an emailed receipt for the signed-in owner", t1.status === 201 && !!(await waitMail(both(to("cust@example.com"), subj(/received your request/i)))));
     const mark5 = inbox.length; await anon.call("POST", "/api/support", { name: "Troll", email: "victim@example.com", subject: "Spam attempt here", message: "Trying to make ServiNear email someone else." }); await sleep(700);
     ok("anonymous support form cannot be used to email third parties", !inbox.slice(mark5).some(to("victim@example.com")));
-  } finally { server.kill(); smtp.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally {
+    server.kill();
+    smtp.close();
+    try {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    } catch (_) {}
+  }
 })().catch((e) => { console.error(e); failed++; }).finally(() => { console.log(failed ? `\n${failed} check(s) failed` : "\nAll email checks passed"); process.exit(failed ? 1 : 0); });
