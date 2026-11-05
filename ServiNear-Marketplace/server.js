@@ -455,10 +455,16 @@ function checkPassword(password, saved) {
 }
 
 function seedDatabase() {
-  const addCategory = db.prepare("INSERT OR IGNORE INTO categories(name,description) VALUES(?,?)");
-  CATEGORIES.forEach(([name,description]) => addCategory.run(name,description));
+  console.log("Seeding authentic Bangladeshi marketplace dataset across all platform modules...");
 
-  // Comprehensive cleanup of legacy synthetic generator data
+  // 1. Service Categories
+  const addCategory = db.prepare(`
+    INSERT OR IGNORE INTO categories (name, description) 
+    VALUES (?, ?)
+  `);
+  CATEGORIES.forEach(([name, description]) => addCategory.run(name, description));
+
+  // 2. Comprehensive cleanup of legacy synthetic generator data
   try {
     try { db.exec("PRAGMA foreign_keys = OFF;"); } catch {}
     db.prepare("DELETE FROM offers WHERE job_id IN (SELECT id FROM jobs WHERE details LIKE '%Synthetic profile%' OR title LIKE '%SN-JOB-%' OR contact_phone LIKE 'DEMO-PHONE%') OR worker_id IN (SELECT id FROM users WHERE email LIKE '%@demo.servinear.local' OR phone LIKE 'DEMO-PHONE%')").run();
@@ -476,11 +482,16 @@ function seedDatabase() {
   }
 
   const defaultHash = passwordHash("ServiNear123!");
-  const addUser = db.prepare(`INSERT OR IGNORE INTO users
-    (name,email,password_hash,role,phone,area,address,category,bio,rate,experience,latitude,longitude,verified,availability)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  const addUser = db.prepare(`
+    INSERT OR IGNORE INTO users (
+      name, email, password_hash, role, phone, area, address, 
+      category, bio, rate, experience, latitude, longitude, 
+      verified, availability, phone_verified, email_verified, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 'active')
+  `);
 
   const authenticUsers = [
+    // Authentic Bangladeshi Customers
     ["Nusrat Jahan", "nusrat.jahan@gmail.com", defaultHash, "customer", "01712-345678", "Dhanmondi, Dhaka", "House 42, Road 27, Dhanmondi, Dhaka", null, "Verified residential client in Dhanmondi. Looking for trusted home service professionals.", null, null, 23.7465, 90.3760, 1, "Available"],
     ["Tariqul Islam", "tariqul.islam@gmail.com", defaultHash, "customer", "01819-234567", "Mirpur 10, Dhaka", "Block C, Avenue 4, Mirpur 10, Dhaka", null, "Apartment owner in Mirpur. Active user for maintenance and fast short-term help.", null, null, 23.8223, 90.3654, 1, "Available"],
     ["Sabrina Yasmin", "sabrina.yasmin@outlook.com", defaultHash, "customer", "01911-345678", "Uttara, Dhaka", "Sector 4, Road 12, Uttara, Dhaka", null, "Professional working in corporate sector, frequently hiring vetted home cleaners and technicians.", null, null, 23.8759, 90.3795, 1, "Available"],
@@ -494,50 +505,239 @@ function seedDatabase() {
     ["Md. Shamim Reza", "shamim.ac.expert@gmail.com", defaultHash, "worker", "01817-223344", "Mirpur 10, Dhaka", "Section 10, Block D, Mirpur, Dhaka", "Appliances", "Daikin & Gree authorized specialist. 11 years in split/inverter AC servicing, precision gas leakage detection, PCB board repairs, and chemical jet wash.", 850, 11, 23.8223, 90.3654, 1, "Available"],
     ["Kazi Nazmul Huda", "nazmul.plumbing@gmail.com", defaultHash, "worker", "01918-334455", "Uttara, Dhaka", "Sector 7, Road 18, Uttara, Dhaka", "Plumbing", "Master sanitary technician. Expert in high-pressure water pumps, concealed pipe leakages, bathroom fittings, and kitchen sink blockages.", 600, 8, 23.8759, 90.3795, 1, "Available"],
     ["Sajjad Hossain", "sajjad.techservice@gmail.com", defaultHash, "worker", "01724-990011", "Motijheel, Dhaka", "Dilkusha Commercial Area, Dhaka", "Computers & IT", "Certified hardware & network engineer. Laptop chip-level servicing, SSD upgrade, data recovery, Windows/macOS install, and enterprise Wi-Fi routers.", 700, 8, 23.7330, 90.4172, 1, "Available"],
-    ["Jannatul Ferdous", "jannat.beauty@gmail.com", defaultHash, "worker", "01825-112244", "Dhanmondi, Dhaka", "Road 8/A, Dhanmondi, Dhaka", "Beauty", "Certified aesthetician and bridal makeup artist. At-home facial, organic hair treatment, bridal mehendi, and skin care services with hygienic kits.", 900, 6, 23.7480, 90.3750, 1, "Available"],
+    ["Jannatul Ferdous", "jannat.beauty@gmail.com", defaultHash, "worker", "01825-112244", "Dhanmondi, Dhaka", "Road 8/A, Dhanmondi, Dhaka", "Beauty", "Certified aesthetician and bridal makeup artist. At-home facial, organic hair treatment, bridal mehendi, and skin care services with hygienic kits.", 900, 6, 23.7480, 90.3750, 0, "Available"],
     ["Rashedul Karim", "rashed.cargo@gmail.com", defaultHash, "worker", "01926-223355", "Old Dhaka, Dhaka", "Lalbagh Road, Dhaka", "Removals", "Owns covered pickup van for home shifting, inter-city parcel transfer, fragile glassware packing, and safe multi-floor furniture carriage.", 1100, 9, 23.7180, 90.3882, 1, "Available"],
-    ["Nazmul Haque", "nazmul.cctv@gmail.com", defaultHash, "worker", "01627-334466", "Mirpur 2, Dhaka", "Stadium Road, Mirpur 2, Dhaka", "Computers & IT", "Hikvision & Dahua certified security camera installer. IP camera setup, DVR/NVR remote viewing configuration on smartphone, and intercom lines.", 750, 7, 23.8050, 90.3620, 1, "Available"],
+    ["Nazmul Haque", "nazmul.cctv@gmail.com", defaultHash, "worker", "01627-334466", "Mirpur 2, Dhaka", "Stadium Road, Mirpur 2, Dhaka", "Computers & IT", "Hikvision & Dahua certified security camera installer. IP camera setup, DVR/NVR remote viewing configuration on smartphone, and intercom lines.", 750, 7, 23.8050, 90.3620, 0, "Available"],
     ["Habibur Rahman", "habib.auto@gmail.com", defaultHash, "worker", "01728-445577", "Farmgate, Dhaka", "Indira Road, Farmgate, Dhaka", "Auto", "Automobile breakdown specialist. Immediate on-spot battery jumpstart, tire puncture repair, radiator coolant check, and brake inspection.", 600, 10, 23.7580, 90.3860, 1, "Available"],
-    ["Iqbal Hossain", "iqbal.plumber.ctg@gmail.com", defaultHash, "worker", "01829-556688", "Agrabad, Chattogram", "Badamtali, Agrabad, Chattogram", "Plumbing", "Chattogram port & residential plumbing contractor. Water storage tank cleaning, submersible motor setup, and pipe fittings.", 650, 11, 22.3569, 91.7832, 1, "Available"],
-    ["Forhad Mia", "forhad.electric.sylhet@gmail.com", defaultHash, "worker", "01930-667799", "Zindabazar, Sylhet", "Court Road, Zindabazar, Sylhet", "Electrical", "Sylhet city specialist for IPS inverters, generator transfer switches, commercial showroom lighting, and earthing installation.", 700, 8, 24.8949, 91.8687, 1, "Available"]
+    ["Iqbal Hossain", "iqbal.plumber.ctg@gmail.com", defaultHash, "worker", "01829-556688", "Agrabad, Chattogram", "Badamtali, Agrabad, Chattogram", "Plumbing", "Chattogram port & residential plumbing contractor. Water storage tank cleaning, submersible motor setup, and pipe fittings.", 650, 11, 22.3569, 91.7832, 0, "Available"],
+    ["Forhad Mia", "forhad.electric.sylhet@gmail.com", defaultHash, "worker", "01930-667799", "Zindabazar, Sylhet", "Court Road, Zindabazar, Sylhet", "Electrical", "Sylhet city specialist for IPS inverters, generator transfer switches, commercial showroom lighting, and earthing installation.", 700, 8, 24.8949, 91.8687, 0, "Available"]
   ];
 
-  authenticUsers.forEach(([name,email,pass,role,phone,area,address,category,bio,rate,exp,lat,lng,verified,avail]) => {
+  authenticUsers.forEach(([name, email, pass, role, phone, area, address, category, bio, rate, exp, lat, lng, verified, avail]) => {
     addUser.run(name, email, pass, role, phone, area, address, category, bio, rate, exp, lat, lng, verified, avail);
+    db.prepare("UPDATE users SET phone_verified = 1, email_verified = 1, status = 'active' WHERE email = ?").run(email);
   });
 
-  // Authentic Community Jobs (CholoBD-compatible real-world data)
-  const addJob = db.prepare(`INSERT OR IGNORE INTO jobs
-    (id, customer_id, title, category, details, area, budget, contact_phone, exact_address, latitude, longitude, status)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`);
+  // User Lookups by Email
+  const userMap = {};
+  db.prepare("SELECT id, email FROM users").all().forEach((u) => { userMap[u.email] = u.id; });
+  const nusratId   = userMap["nusrat.jahan@gmail.com"];
+  const tariqulId  = userMap["tariqul.islam@gmail.com"];
+  const sabrinaId  = userMap["sabrina.yasmin@outlook.com"];
+  const mostafaId  = userMap["mostafa.kamal@yahoo.com"];
+  const rezwanaId  = userMap["dr.rezwana@gmail.com"];
+  const farhanId   = userMap["farhan.tanvir@hotmail.com"];
+  const khadijaId  = userMap["khadija.akhter@gmail.com"];
 
-  const nusrat = db.prepare("SELECT id FROM users WHERE email='nusrat.jahan@gmail.com'").get();
-  const tariqul = db.prepare("SELECT id FROM users WHERE email='tariqul.islam@gmail.com'").get();
-  const sabrina = db.prepare("SELECT id FROM users WHERE email='sabrina.yasmin@outlook.com'").get();
-  const mostafa = db.prepare("SELECT id FROM users WHERE email='mostafa.kamal@yahoo.com'").get();
-  const rezwana = db.prepare("SELECT id FROM users WHERE email='dr.rezwana@gmail.com'").get();
-  const farhan = db.prepare("SELECT id FROM users WHERE email='farhan.tanvir@hotmail.com'").get();
+  const tanvirId   = userMap["tanvir.electrician@gmail.com"];
+  const shamimId   = userMap["shamim.ac.expert@gmail.com"];
+  const nazmulId   = userMap["nazmul.plumbing@gmail.com"];
+  const sajjadId   = userMap["sajjad.techservice@gmail.com"];
+  const jannatId   = userMap["jannat.beauty@gmail.com"];
+  const rashedId   = userMap["rashed.cargo@gmail.com"];
+  const cctvId     = userMap["nazmul.cctv@gmail.com"];
+  const habibId    = userMap["habib.auto@gmail.com"];
+  const iqbalId    = userMap["iqbal.plumber.ctg@gmail.com"];
 
-  if (nusrat && tariqul && sabrina && mostafa) {
-    addJob.run(1, nusrat.id, "Split AC Master Servicing & Precision Gas Refill", "Appliances", "Gree 1.5 ton split AC cooling has dropped significantly. Need outdoor compressor chemical wash, drain line unclogging, and R410A gas pressure check at Dhanmondi 27.", "Dhanmondi, Dhaka", 2800, "01712-345678", "House 42, Road 27, Dhanmondi, Dhaka", 23.7465, 90.3760, "open");
-    addJob.run(2, tariqul.id, "Sub-distribution Board Circuit Breaker Tripping & Rewiring", "Electrical", "Main MCB trips whenever geyser and microwave run simultaneously. Need certified electrician to inspect phase distribution, DB earthing, and replace 32A breaker.", "Mirpur 10, Dhaka", 1600, "01819-234567", "Block C, Avenue 4, Mirpur 10, Dhaka", 23.8223, 90.3654, "open");
-    addJob.run(3, sabrina.id, "Concealed Bathroom Pipe Leakage & Kitchen Sink Mixer Fitting", "Plumbing", "Concealed hot-water CPVC pipe leaking behind master bathroom tiles causing damp walls. Also need to replace kitchen flex faucet with Jaquar mixer.", "Uttara, Dhaka", 2200, "01911-345678", "Sector 4, Road 12, Uttara, Dhaka", 23.8759, 90.3795, "open");
-    addJob.run(4, mostafa.id, "Urgent Home Shifting: 3BHK Furniture & Glassware Transport", "Removals", "Moving from Banani Road 8 to Gulshan 1. Heavy items: King bed, 6-seater dining table, 4 door wardrobe, refrigerator, and 12 carton fragile crockery. Covered van needed.", "Banani, Dhaka", 7500, "01612-456789", "Road 8, Block D, Banani, Dhaka", 23.7937, 90.4043, "open");
-    addJob.run(5, rezwana.id, "Micro-task: Rapid 2-Hour Errand & Document Delivery", "Delivery", "Urgent hospital report and prescription delivery from Mohammadpur Japan Garden City to Square Hospital Panthapath within 2 hours.", "Mohammadpur, Dhaka", 450, "01723-567890", "Japan Garden City, Building 14, Mohammadpur, Dhaka", 23.7658, 90.3582, "open");
-    addJob.run(6, farhan.id, "Home Dual-Band Wi-Fi 6 Router & 4-Channel IP Camera Setup", "Computers & IT", "Setup TP-Link Archer router with mesh extender across 2200 sqft apartment, configure Hikvision IP cameras with mobile app remote viewing.", "Bashundhara, Dhaka", 3000, "01824-678901", "Block C, Road 5, Bashundhara R/A, Dhaka", 23.8151, 90.4255, "open");
+  // 3. Authentic Community Tasks / Jobs
+  const addJob = db.prepare(`
+    INSERT OR REPLACE INTO jobs (
+      id, customer_id, title, category, details, area, budget, 
+      contact_phone, exact_address, latitude, longitude, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  if (nusratId && tariqulId && sabrinaId && mostafaId) {
+    addJob.run(1, nusratId, "Split AC Master Servicing & Precision Gas Refill", "Appliances", "Gree 1.5 ton split AC cooling has dropped significantly. Need outdoor compressor chemical wash, drain line unclogging, and R410A gas pressure check at Dhanmondi 27.", "Dhanmondi, Dhaka", 2800, "01712-345678", "House 42, Road 27, Dhanmondi, Dhaka", 23.7465, 90.3760, "accepted");
+    addJob.run(2, tariqulId, "Sub-distribution Board Circuit Breaker Tripping & Rewiring", "Electrical", "Main MCB trips whenever geyser and microwave run simultaneously. Need certified electrician to inspect phase distribution, DB earthing, and replace 32A breaker.", "Mirpur 10, Dhaka", 1600, "01819-234567", "Block C, Avenue 4, Mirpur 10, Dhaka", 23.8223, 90.3654, "completed");
+    addJob.run(3, sabrinaId, "Concealed Bathroom Pipe Leakage & Kitchen Sink Mixer Fitting", "Plumbing", "Concealed hot-water CPVC pipe leaking behind master bathroom tiles causing damp walls. Also need to replace kitchen flex faucet with Jaquar mixer.", "Uttara, Dhaka", 2200, "01911-345678", "Sector 4, Road 12, Uttara, Dhaka", 23.8759, 90.3795, "completed");
+    addJob.run(4, mostafaId, "Urgent Home Shifting: 3BHK Furniture & Glassware Transport", "Removals", "Moving from Banani Road 8 to Gulshan 1. Heavy items: King bed, 6-seater dining table, 4 door wardrobe, refrigerator, and 12 carton fragile crockery. Covered van needed.", "Banani, Dhaka", 7500, "01612-456789", "Road 8, Block D, Banani, Dhaka", 23.7937, 90.4043, "completed");
+    addJob.run(5, rezwanaId, "Micro-task: Rapid 2-Hour Errand & Document Delivery", "Delivery", "Urgent hospital report and prescription delivery from Mohammadpur Japan Garden City to Square Hospital Panthapath within 2 hours.", "Mohammadpur, Dhaka", 450, "01723-567890", "Japan Garden City, Building 14, Mohammadpur, Dhaka", 23.7658, 90.3582, "open");
+    addJob.run(6, farhanId, "Home Dual-Band Wi-Fi 6 Router & 4-Channel IP Camera Setup", "Computers & IT", "Setup TP-Link Archer router with mesh extender across 2200 sqft apartment, configure Hikvision IP cameras with mobile app remote viewing.", "Bashundhara, Dhaka", 3000, "01824-678901", "Block C, Road 5, Bashundhara R/A, Dhaka", 23.8151, 90.4255, "open");
+    if (khadijaId) addJob.run(7, khadijaId, "Emergency Water Pump Capacitor Burnout & Line Check", "Plumbing", "Submersible water pump in Agrabad residential building not turning on. Tripping master breaker. Need urgent pump inspection and capacitor replacement.", "Agrabad, Chattogram", 1800, "01935-789012", "CDA Residential Area, Agrabad, Chattogram", 22.3569, 91.7832, "open");
+    addJob.run(8, nusratId, "Deep House Painting & Waterproofing for Master Bedroom", "Painting", "Berger Luxury Silk wall painting with damp-proofing sealer coat for master bedroom and balcony ceiling.", "Dhanmondi, Dhaka", 12000, "01712-345678", "House 42, Road 27, Dhanmondi, Dhaka", 23.7465, 90.3760, "open");
   }
 
-  // Authentic Offers from Specialized Providers
-  const addOffer = db.prepare("INSERT OR IGNORE INTO offers(job_id,worker_id,price,message) VALUES(?,?,?,?)");
-  const shamim = db.prepare("SELECT id FROM users WHERE email='shamim.ac.expert@gmail.com'").get();
-  const tanvir = db.prepare("SELECT id FROM users WHERE email='tanvir.electrician@gmail.com'").get();
-  const nazmul = db.prepare("SELECT id FROM users WHERE email='nazmul.plumbing@gmail.com'").get();
-  const rashed = db.prepare("SELECT id FROM users WHERE email='rashed.cargo@gmail.com'").get();
+  // 4. Authentic Provider Offers
+  const addOffer = db.prepare(`
+    INSERT OR REPLACE INTO offers (id, job_id, worker_id, price, message, status) 
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  if (shamimId) addOffer.run(1, 1, shamimId, 2600, "I can visit Dhanmondi 27 today at 3:30 PM with manifold gauge, vacuum pump, and genuine refrigerant.", "accepted");
+  if (tanvirId) addOffer.run(2, 2, tanvirId, 1500, "Will test insulation resistance with megger, balance phase loads, and install Havells MCB with 1-year service warranty.", "accepted");
+  if (nazmulId) addOffer.run(3, 3, nazmulId, 2000, "Experienced in non-destructive acoustic pipe leak detection and sanitary fittings replacement.", "accepted");
+  if (rashedId) addOffer.run(4, 4, rashedId, 7000, "Includes 14ft covered truck, 4 skilled lifters, bubble wrap, and safe delivery.", "accepted");
+  if (habibId) addOffer.run(5, 5, habibId, 450, "Available immediately with motorcycle for swift delivery.", "pending");
+  if (sajjadId) addOffer.run(6, 6, sajjadId, 2800, "Certified IT engineer. Will complete Wi-Fi 6 roaming configuration and NVR phone app remote connection.", "pending");
+  if (cctvId) addOffer.run(7, 6, cctvId, 2900, "Hikvision specialist with full crimping and mounting toolkit.", "pending");
+  if (tanvirId) addOffer.run(8, 8, tanvirId, 11500, "Have professional painting crew and anti-fungal Berger damp sealant.", "pending");
 
-  if (shamim) addOffer.run(1, shamim.id, 2600, "I can visit Dhanmondi 27 today at 3:30 PM with manifold gauge, vacuum pump, and genuine refrigerant.");
-  if (tanvir) addOffer.run(2, tanvir.id, 1500, "Will test insulation resistance with megger, balance phase loads, and install Havells MCB with 1-year service warranty.");
-  if (nazmul) addOffer.run(3, nazmul.id, 2000, "Experienced in non-destructive acoustic pipe leak detection and sanitary fittings replacement.");
-  if (rashed) addOffer.run(4, rashed.id, 7000, "Includes 14ft covered truck, 4 skilled lifters, bubble wrap, and safe delivery.");
+  // 5. Escrow Protection Records
+  const addEscrow = db.prepare(`
+    INSERT OR REPLACE INTO escrows (id, job_id, offer_id, customer_id, worker_id, amount, release_otp, status, released_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  if (nusratId && shamimId) addEscrow.run(1, 1, 1, nusratId, shamimId, 2600, "582914", "held", null);
+  if (tariqulId && tanvirId) addEscrow.run(2, 2, 2, tariqulId, tanvirId, 1500, "739104", "released", new Date(Date.now() - 86400000 * 2).toISOString());
+  if (sabrinaId && nazmulId) addEscrow.run(3, 3, 3, sabrinaId, nazmulId, 2000, "419283", "released", new Date(Date.now() - 86400000 * 4).toISOString());
+  if (mostafaId && rashedId) addEscrow.run(4, 4, 4, mostafaId, rashedId, 7000, "820491", "released", new Date(Date.now() - 86400000 * 6).toISOString());
+
+  // 6. User Wallets
+  const setWallet = db.prepare(`
+    INSERT OR REPLACE INTO wallets (user_id, balance, locked_escrow) 
+    VALUES (?, ?, ?)
+  `);
+  if (nusratId) setWallet.run(nusratId, 6000, 2600);
+  if (tariqulId) setWallet.run(tariqulId, 100, 0);
+  if (sabrinaId) setWallet.run(sabrinaId, 300, 0);
+  if (mostafaId) setWallet.run(mostafaId, 500, 0);
+  if (shamimId) setWallet.run(shamimId, 2600, 0);
+  if (tanvirId) setWallet.run(tanvirId, 1500, 0);
+  if (rashedId) setWallet.run(rashedId, 7000, 0);
+  if (nazmulId) setWallet.run(nazmulId, 2000, 0);
+
+  // 7. Gateway Payments (Top-ups)
+  const addPayment = db.prepare(`
+    INSERT OR IGNORE INTO payments (tran_id, user_id, amount, provider, status, method, risk_level, paid_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  if (nusratId) addPayment.run("SN-DEP-1001", nusratId, 5000, "bKash", "paid", "bKash Online", 0, new Date().toISOString());
+  if (tariqulId) addPayment.run("SN-DEP-1002", tariqulId, 1600, "Nagad", "review", "Nagad Direct", 1, null);
+  if (sabrinaId) addPayment.run("SN-DEP-1003", sabrinaId, 2500, "SSLCommerz", "paid", "Visa Card", 0, new Date().toISOString());
+  if (mostafaId) addPayment.run("SN-DEP-1004", mostafaId, 7500, "bKash", "paid", "bKash Checkout", 0, new Date().toISOString());
+
+  // 8. Payout Requests
+  const addPayout = db.prepare(`
+    INSERT OR REPLACE INTO payouts (id, user_id, amount, method, account, status, reference, admin_note, processed_at, processed_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  if (shamimId) addPayout.run(1, shamimId, 2600, "bKash", "01817-223344", "pending", null, null, null, null);
+  if (tanvirId) addPayout.run(2, tanvirId, 1500, "Nagad", "01715-112233", "pending", null, null, null, null);
+  if (rashedId) addPayout.run(3, rashedId, 7000, "bKash", "01926-223355", "paid", "BKH92817364", "Disbursed via commercial bKash", new Date().toISOString(), 1);
+
+  // 9. Financial Transactions
+  const addTx = db.prepare(`
+    INSERT OR IGNORE INTO transactions (user_id, type, amount, payment_method, trx_id, details)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  if (nusratId) {
+    addTx.run(nusratId, "deposit", 5000, "bKash", "SN-DEP-1001", "Wallet top-up via bKash Online");
+    addTx.run(nusratId, "escrow_hold", 2600, "Wallet Escrow", "ESC-JOB-1", "Escrow locked for Task #1 (AC Servicing)");
+  }
+  if (tariqulId) {
+    addTx.run(tariqulId, "deposit", 1600, "Nagad", "SN-DEP-1002", "Wallet top-up via Nagad Direct");
+    addTx.run(tariqulId, "escrow_hold", 1500, "Wallet Escrow", "ESC-JOB-2", "Escrow locked for Task #2 (DB Breaker)");
+  }
+  if (tanvirId) addTx.run(tanvirId, "escrow_release", 1500, "Wallet Escrow", "ESC-JOB-2", "Payment released for Task #2 completion");
+  if (sabrinaId) {
+    addTx.run(sabrinaId, "deposit", 2500, "SSLCommerz", "SN-DEP-1003", "Wallet top-up via Visa Card");
+    addTx.run(sabrinaId, "escrow_hold", 2000, "Wallet Escrow", "ESC-JOB-3", "Escrow locked for Task #3 (Pipe Leakage)");
+  }
+  if (nazmulId) addTx.run(nazmulId, "escrow_release", 2000, "Wallet Escrow", "ESC-JOB-3", "Payment released for Task #3 completion");
+  if (mostafaId) {
+    addTx.run(mostafaId, "deposit", 7500, "bKash", "SN-DEP-1004", "Wallet top-up via bKash Checkout");
+    addTx.run(mostafaId, "escrow_hold", 7000, "Wallet Escrow", "ESC-JOB-4", "Escrow locked for Task #4 (Home Shifting)");
+  }
+  if (rashedId) addTx.run(rashedId, "escrow_release", 7000, "Wallet Escrow", "ESC-JOB-4", "Payment released for Task #4 completion");
+
+  // 10. Verified Reviews & Ratings
+  const addReview = db.prepare(`
+    INSERT OR REPLACE INTO reviews (id, job_id, customer_id, worker_id, rating, comment)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  if (tariqulId && tanvirId) addReview.run(1, 2, tariqulId, tanvirId, 5, "Exceptional work! Engr. Tanvir properly balanced the sub-distribution board and replaced the tripping breaker. Very polite, arrived on time with proper multimeter and tools. Highly recommended!");
+  if (mostafaId && rashedId) addReview.run(2, 4, mostafaId, rashedId, 5, "Rashedul and his team handled our home shifting from Banani to Gulshan with extreme care. Not a single glass item chipped. Clean covered van and professional helpers.");
+  if (sabrinaId && nazmulId) addReview.run(3, 3, sabrinaId, nazmulId, 4, "Fixed the bathroom concealed hot-water pipe leakage effectively. Cleaned the work area afterwards. Good sanitary tradesman.");
+  if (rezwanaId && shamimId) addReview.run(4, 1, rezwanaId, shamimId, 5, "Shamim Bhai did a comprehensive chemical jet wash and filled R410A refrigerant on our Gree inverter AC. Cooling restored to optimal efficiency.");
+
+  // SVG Mock Documents for NID Verification
+  const nidDoc = (type, name, nid) => {
+    if (type === "front") {
+      return `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="360" height="220" viewBox="0 0 360 220"><rect width="360" height="220" rx="12" fill="%230b4d3c"/><rect x="12" y="12" width="336" height="196" rx="8" fill="%23ffffff"/><text x="24" y="38" font-family="sans-serif" font-size="12" font-weight="bold" fill="%230b4d3c">PEOPLE%27S REPUBLIC OF BANGLADESH</text><text x="24" y="56" font-family="sans-serif" font-size="11" fill="%23d97706">National ID Card / জাতীয় পরিচয় পত্র</text><rect x="24" y="70" width="75" height="90" fill="%23e2e8f0" rx="4"/><circle cx="61" cy="105" r="22" fill="%2394a3b8"/><text x="110" y="92" font-family="sans-serif" font-size="12" font-weight="bold" fill="%231e293b">NAME: ${encodeURIComponent(name)}</text><text x="110" y="112" font-family="sans-serif" font-size="11" fill="%2364748b">DOB: 14 Oct 1992</text><text x="110" y="132" font-family="sans-serif" font-size="11" font-weight="bold" fill="%23b91c1c">NID NO: ${nid}</text><text x="110" y="152" font-family="sans-serif" font-size="10" fill="%23059669">Smart NID Citizen Verification</text></svg>`;
+    }
+    if (type === "back") {
+      return `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="360" height="220" viewBox="0 0 360 220"><rect width="360" height="220" rx="12" fill="%230b4d3c"/><rect x="12" y="12" width="336" height="196" rx="8" fill="%23f8fafc"/><text x="24" y="40" font-family="sans-serif" font-size="11" font-weight="bold" fill="%231e293b">Address: House 24, Road 11, Dhaka</text><text x="24" y="60" font-family="sans-serif" font-size="10" fill="%2364748b">Blood Group: B+ Positive | Issue Date: 2018-05-14</text><rect x="24" y="80" width="312" height="50" fill="%231e293b" rx="2"/><text x="40" y="110" font-family="monospace" font-size="16" fill="%23ffffff">||| | |||| || |||||| | |||| ||| ||</text></svg>`;
+    }
+    return `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="360" height="260" viewBox="0 0 360 260"><rect width="360" height="260" rx="12" fill="%23f1f5f9"/><circle cx="180" cy="95" r="45" fill="%230e6b5c"/><circle cx="180" cy="85" r="22" fill="%23f8fafc"/><rect x="110" y="160" width="140" height="85" rx="6" fill="%230b4d3c"/><rect x="116" y="166" width="128" height="73" rx="4" fill="%23ffffff"/><text x="122" y="188" font-family="sans-serif" font-size="9" font-weight="bold" fill="%230b4d3c">BANGLADESH NID</text><text x="122" y="202" font-family="sans-serif" font-size="8" fill="%231e293b">${encodeURIComponent(name)}</text><text x="122" y="216" font-family="sans-serif" font-size="8" fill="%23b91c1c">${nid}</text><text x="80" y="255" font-family="sans-serif" font-size="10" font-weight="bold" fill="%23047857">Holding NID Selfie Verification</text></svg>`;
+  };
+
+  // 11. NID Verification Applications
+  const addNid = db.prepare(`
+    INSERT OR REPLACE INTO nid_verifications (id, user_id, nid_front, nid_back, selfie_nid, status, admin_notes, created_at, reviewed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  if (jannatId) addNid.run(1, jannatId, nidDoc("front", "Jannatul Ferdous", "5928173921"), nidDoc("back", "Jannatul Ferdous", "5928173921"), nidDoc("selfie", "Jannatul Ferdous", "5928173921"), "pending", null, new Date().toISOString(), null);
+  if (cctvId) addNid.run(2, cctvId, nidDoc("front", "Nazmul Haque", "6819283912"), nidDoc("back", "Nazmul Haque", "6819283912"), nidDoc("selfie", "Nazmul Haque", "6819283912"), "pending", null, new Date().toISOString(), null);
+  if (tanvirId) addNid.run(3, tanvirId, nidDoc("front", "Engr. Tanvir Hasan", "4918273615"), nidDoc("back", "Engr. Tanvir Hasan", "4918273615"), nidDoc("selfie", "Engr. Tanvir Hasan", "4918273615"), "approved", "Verified against national voter database. Trade diploma validated.", new Date(Date.now() - 86400000 * 5).toISOString(), new Date().toISOString());
+  if (iqbalId) addNid.run(4, iqbalId, nidDoc("front", "Iqbal Hossain", "3819273614"), nidDoc("back", "Iqbal Hossain", "3819273614"), nidDoc("selfie", "Iqbal Hossain", "3819273614"), "rejected", "NID back barcode was blurry. Please resubmit high-resolution photo.", new Date(Date.now() - 86400000 * 3).toISOString(), new Date().toISOString());
+
+  // 12. Support & Helpline Tickets
+  const addTicket = db.prepare(`
+    INSERT OR REPLACE INTO support_tickets (id, user_id, name, email, subject, message, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  addTicket.run(1, nusratId || null, "Nusrat Jahan", "nusrat.jahan@gmail.com", "Question regarding bKash payment verification", "Hello support, I topped up ৳2,000 using bKash merchant gateway and wanted to confirm if the funds are safely held in escrow for my AC repair task.", "open", new Date(Date.now() - 3600000 * 2).toISOString());
+  addTicket.run(2, shamimId || null, "Md. Shamim Reza", "shamim.ac.expert@gmail.com", "Payout timing to Nagad mobile wallet", "Assalamu Alaikum. I requested a withdrawal of ৳2,600 yesterday after completing the split AC service at Dhanmondi. Could you please confirm when the payout batch will be processed?", "reviewing", new Date(Date.now() - 3600000 * 6).toISOString());
+  addTicket.run(3, tariqulId || null, "Tariqul Islam", "tariqul.islam@gmail.com", "Electrician safety certification inquiry", "I want to confirm if the electricians on the platform hold valid safety certifications for high-voltage DB distribution board rewiring.", "resolved", new Date(Date.now() - 86400000).toISOString());
+  addTicket.run(4, sabrinaId || null, "Sabrina Yasmin", "sabrina.yasmin@outlook.com", "Invoice receipt for plumbing repair", "Could you please send me a digital tax invoice/receipt for task #3? I need to submit it to our apartment committee for building maintenance reimbursement.", "open", new Date(Date.now() - 3600000 * 12).toISOString());
+  addTicket.run(5, null, "Kamal Hossain", "kamal.citizen@gmail.com", "Helpline hotline query for Chattogram area", "Is the 09612-345678 hotline toll-free across all mobile operators in Bangladesh?", "open", new Date(Date.now() - 3600000 * 20).toISOString());
+
+  // 13. Email Outbox Records
+  const addEmail = db.prepare(`
+    INSERT OR REPLACE INTO email_outbox (
+      id, user_id, to_email, subject, html, text, kind, category, 
+      status, attempts, next_attempt_at, created_at, sent_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  addEmail.run(1, nusratId || null, "nusrat.jahan@gmail.com", "Welcome to ServiNear - Please verify your email", "[removed after delivery]", "Welcome to ServiNear Bangladesh", "verify", "transactional", "sent", 1, 0, new Date(Date.now() - 86400000 * 2).toISOString(), new Date(Date.now() - 86400000 * 2).toISOString());
+  addEmail.run(2, shamimId || null, "shamim.ac.expert@gmail.com", "New Opportunity in Dhanmondi: Split AC Master Servicing", "<p>A client posted a new task matching your profile.</p>", "A client posted a new task matching your profile.", "offer_alert", "activity", "sent", 1, 0, new Date(Date.now() - 86400000).toISOString(), new Date(Date.now() - 86400000).toISOString());
+  addEmail.run(3, 1, "hadimonsurhasan@gmail.com", "Admin Alert: Payout Request Pending Approval (৳2,600)", "<p>A provider requested a withdrawal.</p>", "A provider requested a withdrawal.", "admin_alert", "transactional", "sent", 1, 0, new Date(Date.now() - 3600000 * 4).toISOString(), new Date(Date.now() - 3600000 * 4).toISOString());
+  addEmail.run(4, tariqulId || null, "tariqul.islam@gmail.com", "Receipt: Escrow Release for Task #2 (৳1,500)", "<p>Payment has been completed for Task #2.</p>", "Payment has been completed for Task #2.", "receipt", "transactional", "sent", 1, 0, new Date(Date.now() - 86400000 * 2).toISOString(), new Date(Date.now() - 86400000 * 2).toISOString());
+
+  // 14. Administrative Audit Log
+  const addAudit = db.prepare(`
+    INSERT OR REPLACE INTO audit_log (id, actor_name, action, entity, entity_id, detail, ip, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  addAudit.run(1, "System", "system.bootstrap", "database", "init", '{"version":"2.0.0","mode":"production_ready"}', "127.0.0.1", new Date(Date.now() - 86400000 * 5).toISOString());
+  addAudit.run(2, "Monsur Hasan", "category.verify", "category", "Appliances", '{"status":"active","workers_indexed":12}', "127.0.0.1", new Date(Date.now() - 86400000 * 4).toISOString());
+  addAudit.run(3, "Monsur Hasan", "nid.approve", "user", String(tanvirId || 8), '{"applicant":"Engr. Tanvir Hasan","decision":"approved"}', "127.0.0.1", new Date(Date.now() - 86400000 * 3).toISOString());
+  addAudit.run(4, "Monsur Hasan", "escrow.audit", "escrow", "1", '{"job_id":1,"amount":2600,"status":"held"}', "127.0.0.1", new Date(Date.now() - 86400000).toISOString());
+
+  // 15. Real-time Notifications
+  const addNotif = db.prepare(`
+    INSERT OR REPLACE INTO notifications (id, user_id, title, message, type, link, read, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  if (nusratId) {
+    addNotif.run(1, nusratId, "New Offer Received", "Md. Shamim Reza offered ৳2,600 on your Split AC servicing task.", "offer", "/jobs", 0, new Date(Date.now() - 3600000 * 2).toISOString());
+    addNotif.run(2, nusratId, "New Message from Engr. Tanvir Hasan", "Hello! I noticed your AC servicing post. Feel free to reach out if you need DB board inspection.", "chat", "/inbox", 0, new Date(Date.now() - 3600000 * 3).toISOString());
+    addNotif.run(3, nusratId, "Wallet Credited: ৳5,000", "Top-up via bKash Online confirmed. Your available balance is ৳2,400 with ৳2,600 in escrow.", "wallet", "/profile", 1, new Date(Date.now() - 86400000).toISOString());
+  }
+  if (shamimId) {
+    addNotif.run(4, shamimId, "Offer Accepted & Escrow Locked!", "Client secured ৳2,600 in ServiNear Escrow for Task #1. Customer address and phone unlocked.", "accepted", "/jobs", 0, new Date(Date.now() - 3600000 * 2).toISOString());
+    addNotif.run(5, shamimId, "New Task in Dhanmondi", "Split AC Master Servicing & Precision Gas Refill posted near your service area.", "job", "/jobs", 1, new Date(Date.now() - 86400000).toISOString());
+  }
+  if (tanvirId) {
+    addNotif.run(6, tanvirId, "Escrow Released: ৳1,500", "Client marked Task #2 complete. ৳1,500 has been credited to your wallet balance.", "wallet", "/profile", 0, new Date(Date.now() - 86400000 * 2).toISOString());
+  }
+
+  // 16. Chat Messages
+  const addMsg = db.prepare(`
+    INSERT OR REPLACE INTO messages (id, sender_id, recipient_id, job_id, content, read, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  if (nusratId && shamimId) {
+    addMsg.run(1, shamimId, nusratId, 1, "Assalamu Alaikum Nusrat Apa. I will arrive at House 42 Road 27 today at 3:30 PM with the manifold gauge, vacuum pump, and R410A refrigerant.", 1, new Date(Date.now() - 3600000 * 3).toISOString());
+    addMsg.run(2, nusratId, shamimId, 1, "Walaikum Assalam Shamim Bhai. Please bring an outdoor jet spray hose as well for the compressor wash.", 1, new Date(Date.now() - 3600000 * 2).toISOString());
+    addMsg.run(3, shamimId, nusratId, 1, "Understood, high-pressure jet pump is ready in my service kit. See you soon.", 0, new Date(Date.now() - 3600000).toISOString());
+  }
+  if (nusratId && tanvirId) {
+    addMsg.run(4, tanvirId, nusratId, null, "Hello Nusrat, if you ever need your main switchboard or DB breaker inspected while I am in Dhanmondi, let me know.", 1, new Date(Date.now() - 86400000).toISOString());
+    addMsg.run(5, nusratId, tanvirId, null, "Thank you Tanvir Bhai, we may need a 32A breaker replacement next week. Will message you.", 1, new Date(Date.now() - 86400000 + 1800000).toISOString());
+  }
+
+  console.log("Seeding complete: All 10 admin sections, financial escrows, reviews, tickets and chat history populated.");
 }
 const SEED_DEMO = process.env.SEED_DEMO_DATA === "true" || !IS_PROD;
 if (SEED_DEMO) {
@@ -1111,30 +1311,112 @@ async function handleApi(req,res,url) {
 
     return send(res,200,{ok:true,escrow:{amount:offer.price,release_otp:releaseOtp,status:"held"}});
   }
-  const completeMatch=url.pathname.match(/^\/api\/jobs\/(\d+)\/complete$/);
-  if(req.method==="POST"&&completeMatch) {
-    requireUser(user,["worker"]);const result=db.prepare(`UPDATE jobs SET status='completed' WHERE id=? AND status='accepted'
-      AND id IN(SELECT job_id FROM offers WHERE worker_id=? AND status='accepted')`).run(Number(completeMatch[1]),user.id);
-    if(!result.changes)fail(404,"This accepted task is not assigned to your account.");return send(res,200,{ok:true});
+  // --- Job Completion Endpoint ---
+  const completeMatch = url.pathname.match(/^\/api\/jobs\/(\d+)\/complete$/);
+  if (req.method === "POST" && completeMatch) {
+    requireUser(user, ["worker"]);
+    const targetJobId = Number(completeMatch[1]);
+    const result = db.prepare(`
+      UPDATE jobs 
+      SET status = 'completed' 
+      WHERE id = ? 
+        AND status = 'accepted'
+        AND id IN (
+          SELECT job_id 
+          FROM offers 
+          WHERE worker_id = ? 
+            AND status = 'accepted'
+        )
+    `).run(targetJobId, user.id);
+
+    if (!result.changes) {
+      fail(404, "This accepted task is not assigned to your account.");
+    }
+    return send(res, 200, { ok: true });
   }
-  const reviewMatch=url.pathname.match(/^\/api\/jobs\/(\d+)\/review$/);
-  if(req.method==="POST"&&reviewMatch) {
-    requireUser(user,["customer"]);const jobId=Number(reviewMatch[1]);const body=await readBody(req);const rating=Number(body.rating);const comment=String(body.comment||"").trim().slice(0,600);
-    const job=db.prepare("SELECT id,status FROM jobs WHERE id=? AND customer_id=?").get(jobId,user.id);if(!job||job.status!=="completed")fail(409,"Reviews are available after the job is complete.");
-    if(!Number.isInteger(rating)||rating<1||rating>5)fail(400,"Choose a rating from 1 to 5.");const offer=db.prepare("SELECT worker_id FROM offers WHERE job_id=? AND status='accepted'").get(jobId);
-    try {db.prepare("INSERT INTO reviews(job_id,customer_id,worker_id,rating,comment) VALUES(?,?,?,?,?)").run(jobId,user.id,offer.worker_id,rating,comment);}
-    catch(error){if(String(error.message).includes("UNIQUE"))fail(409,"You already reviewed this job.");throw error;}return send(res,201,{ok:true});
+  // --- Customer Job Review Endpoint ---
+  const reviewMatch = url.pathname.match(/^\/api\/jobs\/(\d+)\/review$/);
+  if (req.method === "POST" && reviewMatch) {
+    requireUser(user, ["customer"]);
+    const jobId = Number(reviewMatch[1]);
+    const body = await readBody(req);
+    const rating = Number(body.rating);
+    const comment = String(body.comment || "").trim().slice(0, 600);
+
+    const job = db.prepare(`
+      SELECT id, status 
+      FROM jobs 
+      WHERE id = ? AND customer_id = ?
+    `).get(jobId, user.id);
+
+    if (!job || job.status !== "completed") {
+      fail(409, "Reviews are available after the job is complete.");
+    }
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      fail(400, "Choose a rating from 1 to 5.");
+    }
+
+    const offer = db.prepare(`
+      SELECT worker_id 
+      FROM offers 
+      WHERE job_id = ? AND status = 'accepted'
+    `).get(jobId);
+
+    try {
+      db.prepare(`
+        INSERT INTO reviews (job_id, customer_id, worker_id, rating, comment)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(jobId, user.id, offer.worker_id, rating, comment);
+    } catch (error) {
+      if (String(error.message).includes("UNIQUE")) {
+        fail(409, "You already reviewed this job.");
+      }
+      throw error;
+    }
+    return send(res, 201, { ok: true });
   }
-  if(req.method==="POST"&&url.pathname==="/api/support") {
-    const body=await readBody(req);const name=validateText(body.name||user?.name,"Name",2,80);const email=String(body.email||user?.email||"").trim().toLowerCase();
-    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))fail(400,"Enter a valid email address.");const subject=validateText(body.subject,"Subject",4,120);const message=validateText(body.message,"Message",20,2000);
-    if(!limiter.hit("support:"+ctxIp,5,3600*1000).allowed)fail(429,"Too many requests. Please try again later.");
-    const ticket=db.prepare("INSERT INTO support_tickets(user_id,name,email,subject,message) VALUES(?,?,?,?,?)").run(user?.id||null,name,email,subject,message);
-    if(user&&user.email===email) mailService.enqueue({userId:user.id,to:email,kind:"ticket_received",category:"transactional",data:{name,subject,ticketId:Number(ticket.lastInsertRowid)}});
-    return send(res,201,{ok:true});
+  // --- Support / Helpdesk Ticket Submission ---
+  if (req.method === "POST" && url.pathname === "/api/support") {
+    const body = await readBody(req);
+    const name = validateText(body.name || user?.name, "Name", 2, 80);
+    const email = String(body.email || user?.email || "").trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      fail(400, "Enter a valid email address.");
+    }
+    const subject = validateText(body.subject, "Subject", 4, 120);
+    const message = validateText(body.message, "Message", 20, 2000);
+
+    if (!limiter.hit("support:" + ctxIp, 5, 3600 * 1000).allowed) {
+      fail(429, "Too many requests. Please try again later.");
+    }
+
+    const ticket = db.prepare(`
+      INSERT INTO support_tickets (user_id, name, email, subject, message)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(user?.id || null, name, email, subject, message);
+
+    if (user && user.email === email) {
+      mailService.enqueue({
+        userId: user.id,
+        to: email,
+        kind: "ticket_received",
+        category: "transactional",
+        data: { name, subject, ticketId: Number(ticket.lastInsertRowid) }
+      });
+    }
+    return send(res, 201, { ok: true });
   }
-  if(req.method==="GET"&&url.pathname==="/api/admin/summary") {
-    requireUser(user,["admin"]);return send(res,200,{users:db.prepare("SELECT COUNT(*) AS count FROM users").get().count,providers:db.prepare("SELECT COUNT(*) AS count FROM users WHERE role='worker'").get().count,customers:db.prepare("SELECT COUNT(*) AS count FROM users WHERE role='customer'").get().count,openJobs:db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE status='open'").get().count,pending:db.prepare("SELECT COUNT(*) AS count FROM users WHERE role='worker' AND verified=0").get().count,tickets:db.prepare("SELECT COUNT(*) AS count FROM support_tickets WHERE status!='resolved'").get().count});
+  if (req.method === "GET" && url.pathname === "/api/admin/summary") {
+    requireUser(user, ["admin"]);
+    const stats = {
+      users: db.prepare("SELECT COUNT(*) AS count FROM users").get().count,
+      providers: db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'worker'").get().count,
+      customers: db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'customer'").get().count,
+      openJobs: db.prepare("SELECT COUNT(*) AS count FROM jobs WHERE status = 'open'").get().count,
+      pending: db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'worker' AND verified = 0").get().count,
+      tickets: db.prepare("SELECT COUNT(*) AS count FROM support_tickets WHERE status != 'resolved'").get().count
+    };
+    return send(res, 200, stats);
   }
   if(req.method==="GET"&&url.pathname==="/api/admin/support") {
     requireUser(user,["admin"]);return send(res,200,db.prepare("SELECT id,name,email,subject,message,status,created_at FROM support_tickets ORDER BY created_at DESC LIMIT 100").all());
@@ -1183,12 +1465,25 @@ async function handleApi(req,res,url) {
     const app = db.prepare("SELECT id, status, admin_notes, created_at, reviewed_at FROM nid_verifications WHERE user_id=? ORDER BY created_at DESC LIMIT 1").get(user.id);
     return send(res,200,{application: app || null, verified: Boolean(user.verified)});
   }
-  if(req.method==="GET"&&url.pathname==="/api/admin/nid-applications") {
-    requireUser(user,["admin"]);
-    const list = db.prepare(`SELECT n.id, n.user_id, n.nid_front, n.nid_back, n.selfie_nid, n.status, n.admin_notes, n.created_at, n.reviewed_at,
-      u.name, u.email, u.phone, u.area, u.role, u.category, u.verified
-      FROM nid_verifications n JOIN users u ON u.id=n.user_id ORDER BY CASE WHEN n.status='pending' THEN 0 ELSE 1 END, n.created_at DESC LIMIT 50`).all();
-    return send(res,200,list);
+  // Admin: View submitted NID verification applications
+  if (req.method === "GET" && url.pathname === "/api/admin/nid-applications") {
+    requireUser(user, ["admin"]);
+    const list = db.prepare(`
+      SELECT 
+        n.id, n.user_id, n.nid_front, n.nid_back, n.selfie_nid, 
+        n.nid_front AS front_photo, n.nid_back AS back_photo, n.selfie_nid AS selfie_photo,
+        n.status, n.admin_notes, n.created_at, n.reviewed_at,
+        u.name, u.email, u.phone, 
+        u.name AS user_name, u.email AS user_email, u.phone AS user_phone, 
+        u.area, u.role, u.category, u.verified
+      FROM nid_verifications n 
+      JOIN users u ON u.id = n.user_id 
+      ORDER BY 
+        CASE WHEN n.status = 'pending' THEN 0 ELSE 1 END, 
+        n.created_at DESC 
+      LIMIT 50
+    `).all();
+    return send(res, 200, list);
   }
   const nidReviewMatch = url.pathname.match(/^\/api\/admin\/nid-applications\/(\d+)$/);
   if(req.method==="PATCH"&&nidReviewMatch) {
@@ -1484,7 +1779,10 @@ async function handleApi(req,res,url) {
     const method = ["bKash","Nagad","Rocket"].includes(body.method)?body.method:"bKash";
     if(!Number.isInteger(amount)||amount<100) fail(400,"Minimum payout withdrawal is ৳100.");
     const dest = normalizeBdPhone(body.phone);
-    if(!dest||dest.e164!==user.phone_e164) fail(400,"For your security, payouts go only to your verified mobile number ("+user.phone+").");
+    const userPhone = normalizeBdPhone(user.phone);
+    if (!dest || !userPhone || dest.e164 !== userPhone.e164) {
+      fail(400, "For your security, payouts go only to your verified mobile number (" + user.phone + ").");
+    }
     if(db.prepare("SELECT COUNT(*) AS c FROM payouts WHERE user_id=? AND status='pending'").get(user.id).c>=3) fail(429,"You already have 3 payouts waiting. Please wait for them to be processed.");
 
     ensureWallet(user.id);
